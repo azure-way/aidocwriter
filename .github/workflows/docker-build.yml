@@ -21,21 +21,21 @@ jobs:
     strategy:
       matrix:
         include:
-          - context: src/functions_plan_intake
+          - dockerfile: src/functions_plan_intake/Dockerfile
             image_name: docwriter-plan-intake
-          - context: src/functions_intake_resume
+          - dockerfile: src/functions_intake_resume/Dockerfile
             image_name: docwriter-intake-resume
-          - context: src/functions_plan
+          - dockerfile: src/functions_plan/Dockerfile
             image_name: docwriter-plan
-          - context: src/functions_write
+          - dockerfile: src/functions_write/Dockerfile
             image_name: docwriter-write
-          - context: src/functions_review
+          - dockerfile: src/functions_review/Dockerfile
             image_name: docwriter-review
-          - context: src/functions_verify
+          - dockerfile: src/functions_verify/Dockerfile
             image_name: docwriter-verify
-          - context: src/functions_rewrite
+          - dockerfile: src/functions_rewrite/Dockerfile
             image_name: docwriter-rewrite
-          - context: src/functions_finalize
+          - dockerfile: src/functions_finalize/Dockerfile
             image_name: docwriter-finalize
 
     steps:
@@ -67,7 +67,8 @@ jobs:
       - name: Build and push ${{ matrix.image_name }}
         uses: docker/build-push-action@v5
         with:
-          context: ${{ matrix.context }}
+          context: .
+          file: ${{ matrix.dockerfile }}
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           tags: |
             ${{ secrets.ACR_LOGIN_SERVER }}/${{ matrix.image_name }}:latest
