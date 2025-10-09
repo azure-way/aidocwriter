@@ -1,0 +1,100 @@
+name: Build Docker Images
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    strategy:
+      matrix:
+        include:
+          - context: src/functions_plan_intake
+            image_name: docwriter-plan-intake
+          - context: src/functions_intake_resume
+            image_name: docwriter-intake-resume
+          - context: src/functions_plan
+            image_name: docwriter-plan
+          - context: src/functions_write
+            image_name: docwriter-write
+          - context: src/functions_review
+            image_name: docwriter-review
+          - context: src/functions_verify
+            image_name: docwriter-verify
+          - context: src/functions_rewrite
+            image_name: docwriter-rewrite
+          - context: src/functions_finalize
+            image_name: docwriter-finalize
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine version
+        id: version
+        run: |
+          VERSION=$(git describe --tags --long --dirty | tr -d '\n')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Authenticate to ACR
+        run: az acr login --name ${{ secrets.ACR_NAME }}
+
+      - name: Build and push ${{ matrix.image_name }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ secrets.ACR_LOGIN_SERVER }}/${{ matrix.image_name }}:latest
+            ${{ secrets.ACR_LOGIN_SERVER }}/${{ matrix.image_name }}:v${{ steps.version.outputs.version }}
+
+  api:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Authenticate to ACR
+        run: az acr login --name ${{ secrets.ACR_NAME }}
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.api
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ secrets.ACR_LOGIN_SERVER }}/docwriter-api:latest
+            ${{ secrets.ACR_LOGIN_SERVER }}/docwriter-api:v${{ needs.build.outputs.version }}
