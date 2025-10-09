@@ -1,0 +1,1 @@
+subscription-id = "aa2aa2cc-88e3-462f-ba3a-37cd991f2281"

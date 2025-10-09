@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docwriter"
+version = "0.1.0"
+description = "Agentic AI document writer with planning, writing, review, and Azure Service Bus scaling"
+authors = [{ name = "DocWriter" }]
+requires-python = ">=3.10"
+dependencies = [
+  "openai>=1.40.0",
+  "typer>=0.12.3",
+  "pydantic>=2.7.0",
+  "rich>=13.7.1",
+  "tiktoken>=0.7.0",
+  "azure-servicebus>=7.12.3",
+  "azure-storage-blob>=12.19.1",
+  "opentelemetry-sdk>=1.27.0",
+  "opentelemetry-exporter-otlp>=1.27.0",
+  "requests>=2.32.0",
+  "markdown-it-py>=3.0.0",
+  "weasyprint>=62.0",
+  "python-docx>=1.1.0",
+  "tomli>=2.0.1",
+  "azure-functions>=1.19.0",
+  "fastapi>=0.111.0",
+  "uvicorn>=0.30.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4",
+  "pytest-cov>=4.1",
+  "ruff>=0.6.0",
+]
+
+[project.scripts]
+docwriter = "docwriter.cli:app"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+markers = [
+  "e2e: end-to-end tests that require Azure resources and real LLM access",
+]
