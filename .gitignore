@@ -17,3 +17,7 @@ worker_logs/
 config/
 scripts/
 .next/*
+*.tfvars
+*.tfstate
+*.tfstate.backup
+*.hcl
