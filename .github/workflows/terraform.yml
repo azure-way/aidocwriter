@@ -35,9 +35,9 @@ jobs:
 
       - name: Terraform Init
         id: init
-        run: terraform init -backend-config="access_key=${{secrets.access_key}}" -backend-config="storage_account_name=${{secrets.storage_account_name}}" -backend-config="container_name=${{secrets.container_name}}" -backend-config="key=${{ secrets.backend_key }}" -openai_base_url="${{ secrets.openai_base_url }}" -openai_api_version="${{ secrets.openai_api_version }}" -openai_api_key_secret="${{ secrets.openai_api_key_secret }}"
+        run: terraform init -backend-config="access_key=${{secrets.access_key}}" -backend-config="storage_account_name=${{secrets.storage_account_name}}" -backend-config="container_name=${{secrets.container_name}}" -backend-config="key=${{ secrets.backend_key }}"
     
       - name: Terraform Apply
-        id: apply
-        run: terraform apply --auto-approve -input=false -var="spn-client-id=${{secrets.SPN_CLIENT_ID}}" -var="spn-client-secret=${{secrets.SPN_CLIENT_SECRET}}" -var="spn-tenant-id=${{secrets.AZURE_TENANT_ID}}" -var="subscription-id=${{secrets.subscription_id}}"
+        id: apply 
+        run: terraform apply --auto-approve -input=false -var="spn-client-id=${{secrets.SPN_CLIENT_ID}}" -var="spn-client-secret=${{secrets.SPN_CLIENT_SECRET}}" -var="spn-tenant-id=${{secrets.AZURE_TENANT_ID}}" -var="subscription-id=${{secrets.subscription_id}}" -var="openai_base_url=${{ secrets.openai_base_url }}" -var="openai_api_version=${{ secrets.openai_api_version }}" -var="openai_api_key_secret=${{ secrets.openai_api_key_secret }}"
         continue-on-error: false              
