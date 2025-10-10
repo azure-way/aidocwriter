@@ -37,6 +37,14 @@ resource "azurerm_container_app" "api" {
           value = env.value
         }
       }
+
+      dynamic "env" {
+        for_each = var.api_secrets
+        content {
+          name        = env.value.env_name
+          secret_name = env.value.name
+        }
+      }
     }
   }
 
@@ -48,6 +56,15 @@ resource "azurerm_container_app" "api" {
     traffic_weight {
       percentage = 100
       latest_revision = true
+    }
+  }
+
+  dynamic "secret" {
+    for_each = var.api_secrets
+    content {
+      name  = secret.value.name
+      value = secret.value.key_vault_secret_id
+      identity = secret.value.identity
     }
   }
 }

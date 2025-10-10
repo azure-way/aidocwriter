@@ -31,6 +31,12 @@ resource "azurerm_servicebus_queue" "queues" {
   dead_lettering_on_message_expiration = true
 }
 
+resource "azurerm_key_vault_secret" "secret_1" {
+  name         = "servicebus-connection-string"
+  value        = azurerm_servicebus_namespace.main.default_primary_connection_string
+  key_vault_id = var.key_vault_id
+}
+
 output "namespace_name" {
   value = azurerm_servicebus_namespace.main.name
 }
@@ -39,7 +45,7 @@ output "topic_name" {
   value = azurerm_servicebus_topic.status.name
 }
 
-output "primary_connection_string" {
-  value       = azurerm_servicebus_namespace.main.default_primary_connection_string
-  sensitive   = true
+output "connection_string_kv_id" {
+  value = azurerm_key_vault_secret.secret_1.versionless_id
+  
 }

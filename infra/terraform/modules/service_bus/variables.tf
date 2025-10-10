@@ -18,3 +18,8 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "key_vault_id" {
+  type = string
+  
+}

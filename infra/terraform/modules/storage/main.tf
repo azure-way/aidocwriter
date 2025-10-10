@@ -14,11 +14,17 @@ resource "azurerm_storage_container" "documents" {
   container_access_type = "private"
 }
 
+resource "azurerm_key_vault_secret" "secret_1" {
+  name         = "storage-connection-string"
+  value        = azurerm_storage_account.main.primary_connection_string
+  key_vault_id = var.key_vault_id
+}
+
 output "account_name" {
   value = azurerm_storage_account.main.name
 }
 
-output "connection_string" {
-  value       = azurerm_storage_account.main.primary_connection_string
-  sensitive   = true
+output "connection_string_kv_id" {
+  value = azurerm_key_vault_secret.secret_1.versionless_id
+  
 }

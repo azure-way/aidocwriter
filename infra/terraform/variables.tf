@@ -39,6 +39,23 @@ variable "service_bus_queues" {
   ]
 }
 
+variable "openai_base_url" {
+  type = string
+  
+}
+
+variable "openai_api_version" {
+  type = string 
+  
+}
+
+variable "openai_api_key_secret" {
+  type      = string
+  sensitive = true
+  
+}
+
+
 variable "subscription-id" {
   description = "Azure subscription ID"
 }
@@ -54,3 +71,4 @@ variable "spn-client-secret" {
 variable "spn-tenant-id" {
   description = "Tenant ID for service principal"
 }
+

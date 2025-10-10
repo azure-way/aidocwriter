@@ -35,7 +35,7 @@ jobs:
 
       - name: Terraform Init
         id: init
-        run: terraform init -backend-config="access_key=${{secrets.access_key}}" -backend-config="storage_account_name=${{secrets.storage_account_name}}" -backend-config="container_name=${{secrets.container_name}}" -backend-config="key=${{ secrets.backend_key }}"
+        run: terraform init -backend-config="access_key=${{secrets.access_key}}" -backend-config="storage_account_name=${{secrets.storage_account_name}}" -backend-config="container_name=${{secrets.container_name}}" -backend-config="key=${{ secrets.backend_key }}" -openai_base_url="${{ secrets.openai_base_url }}" -openai_api_version="${{ secrets.openai_api_version }}" -openai_api_key_secret="${{ secrets.openai_api_key_secret }}"
     
       - name: Terraform Apply
         id: apply
