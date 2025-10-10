@@ -1,13 +1,6 @@
 name: Terraform deploy
 on:
-  workflow_call:
-    inputs:
-      terraform_directory:
-        required: true
-        type: string
-      backend_key:
-        required: true
-        type: string
+  workflow_dispatch:
 
 permissions:
   id-token: write
@@ -18,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ${{ inputs.terraform_directory || './infra/terraform' }}
+        working-directory: './infra/terraform'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,7 +33,7 @@ jobs:
 
       - name: Terraform Init
         id: init
-        run: terraform init -backend-config="access_key=${{secrets.access_key}}" -backend-config="storage_account_name=${{secrets.storage_account_name}}" -backend-config="container_name=${{secrets.container_name}}" -backend-config="key=${{ inputs.backend_key }}"
+        run: terraform init -backend-config="access_key=${{secrets.access_key}}" -backend-config="storage_account_name=${{secrets.storage_account_name}}" -backend-config="container_name=${{secrets.container_name}}" -backend-config="key=${{ secrets.backend_key }}"
     
       - name: Terraform Apply
         id: apply
