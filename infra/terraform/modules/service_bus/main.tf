@@ -51,6 +51,6 @@ output "connection_string_kv_id" {
 }
 
 output "connection_string_secret_id" {
-  value = azurerm_key_vault_secret.secret_1.resource_id
+  value = azurerm_key_vault_secret.secret_1.resource_versionless_id
   
 }

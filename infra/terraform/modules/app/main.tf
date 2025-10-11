@@ -4,6 +4,13 @@ resource "azurerm_container_app_environment" "main" {
   resource_group_name        = var.resource_group_name
   log_analytics_workspace_id = var.log_analytics_id
   tags                       = var.tags
+
+  workload_profile {
+    name = "Consumption"
+    workload_profile_type = "Consumption"
+    maximum_count = 0
+    minimum_count = 0
+  }  
 }
 
 resource "azurerm_container_app" "api" {
@@ -51,7 +58,7 @@ resource "azurerm_container_app" "api" {
   ingress {
     allow_insecure_connections = false
     external_enabled           = true
-    target_port                = 80
+    target_port                = 8000
    
     traffic_weight {
       percentage = 100
@@ -88,6 +95,15 @@ resource "azurerm_container_app" "functions" {
     identity = var.managed_identity_id
   }
 
+  dynamic "secret" {
+    for_each = var.api_secrets
+    content {
+      name                = secret.value.name
+      key_vault_secret_id = secret.value.key_vault_secret_id
+      identity            = secret.value.identity
+    }
+  }
+
   template {
     container {
       name   = "functions"
@@ -115,15 +131,6 @@ resource "azurerm_container_app" "functions" {
           secret_name = env.value.name
         }
       }
-    }
-  }
-
-  dynamic "secret" {
-    for_each = var.api_secrets
-    content {
-      name                = secret.value.name
-      key_vault_secret_id = secret.value.key_vault_secret_id
-      identity            = secret.value.identity
     }
   }
 }

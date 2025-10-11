@@ -73,7 +73,7 @@ resource "azurerm_key_vault_secret" "open_ai_key" {
 }
 
 resource "azurerm_role_assignment" "open_ai_key_secret_reader" {
-  scope                = azurerm_key_vault_secret.open_ai_key.resource_id
+  scope                = azurerm_key_vault_secret.open_ai_key.resource_versionless_id
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.ca_identity.principal_id
 
@@ -115,6 +115,10 @@ module "service_bus" {
 
 resource "time_sleep" "wait_60_seconds" {
   create_duration = "60s"
+  
+  triggers = {
+    always_run = "${timestamp()}"
+  }
 
   depends_on = [ azurerm_role_assignment.service_bus_secret_reader, azurerm_role_assignment.storage_secret_reader, azurerm_role_assignment.open_ai_key_secret_reader ]
 }
@@ -128,7 +132,7 @@ module "app" {
   managed_identity_id      = azurerm_user_assigned_identity.ca_identity.id
   container_registry_login  = module.container_registry.url
   tags                     = var.tags
-  api_image                = "${module.container_registry.url}/docwriter-api:v1"
+  api_image                = "${module.container_registry.url}/docwriter-api:latest"
   api_env = {
     OPENAI_BASE_URL               = var.openai_base_url
     OPENAI_API_VERSION            = var.openai_api_version
