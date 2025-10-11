@@ -181,4 +181,6 @@ module "app" {
       identity = azurerm_user_assigned_identity.ca_identity.id
     }
   ]
+
+  depends_on = [ azurerm_role_assignment.service_bus_secret_reader, azurerm_role_assignment.storage_secret_reader, azurerm_role_assignment.open_ai_key_secret_reader ]
 }
