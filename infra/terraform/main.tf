@@ -51,7 +51,7 @@ resource "azurerm_role_assignment" "principal_rbac" {
 }
 
 resource "azurerm_role_assignment" "service_bus_secret_reader" {
-  scope                = module.service_bus.connection_string_kv_id
+  scope                = module.service_bus.connection_string_id
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.ca_identity.principal_id
 
@@ -59,7 +59,7 @@ resource "azurerm_role_assignment" "service_bus_secret_reader" {
 }
 
 resource "azurerm_role_assignment" "storage_secret_reader" {
-  scope                = module.storage.connection_string_kv_id
+  scope                = module.storage.connection_string_id
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.ca_identity.principal_id
 

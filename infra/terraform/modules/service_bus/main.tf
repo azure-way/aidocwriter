@@ -49,3 +49,8 @@ output "connection_string_kv_id" {
   value = azurerm_key_vault_secret.secret_1.versionless_id
   
 }
+
+output "connection_string_id" {
+  value = azurerm_key_vault_secret.secret_1.id
+  
+}
