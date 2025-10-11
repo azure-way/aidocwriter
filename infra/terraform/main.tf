@@ -54,12 +54,16 @@ resource "azurerm_role_assignment" "service_bus_secret_reader" {
   scope                = module.service_bus.connection_string_kv_id
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.ca_identity.principal_id
+
+  depends_on = [ module.service_bus ]
 }
 
 resource "azurerm_role_assignment" "storage_secret_reader" {
   scope                = module.storage.connection_string_kv_id
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.ca_identity.principal_id
+
+  depends_on = [ module.storage ]
 }
   
 resource "azurerm_key_vault_secret" "open_ai_key" {
@@ -68,6 +72,13 @@ resource "azurerm_key_vault_secret" "open_ai_key" {
   key_vault_id = azurerm_key_vault.rbac_example.id
 }
 
+resource "azurerm_role_assignment" "storage_secret_reader" {
+  scope                = azurerm_key_vault_secret.open_ai_key.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_user_assigned_identity.ca_identity.principal_id
+
+  depends_on = [ module.storage ]
+}
 
 module "monitoring" {
   source              = "./modules/monitoring"
