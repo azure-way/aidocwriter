@@ -138,14 +138,14 @@ module "app" {
     AZURE_BLOB_CONTAINER          = "docwriter"
   }
   functions_images = {
-    plan-intake    = "${module.container_registry.url}/docwriter-plan-intake:v1"
-    intake-resume  = "${module.container_registry.url}/docwriter-intake-resume:v1"
-    plan           = "${module.container_registry.url}/docwriter-plan:v1"
-    write          = "${module.container_registry.url}/docwriter-write:v1"
-    review         = "${module.container_registry.url}/docwriter-review:v1"
-    verify         = "${module.container_registry.url}/docwriter-verify:v1"
-    rewrite        = "${module.container_registry.url}/docwriter-rewrite:v1"
-    finalize       = "${module.container_registry.url}/docwriter-finalize:v1"
+    plan-intake    = "${module.container_registry.url}/docwriter-plan-intake:latest"
+    intake-resume  = "${module.container_registry.url}/docwriter-intake-resume:latest"
+    plan           = "${module.container_registry.url}/docwriter-plan:latest"
+    write          = "${module.container_registry.url}/docwriter-write:latest"
+    review         = "${module.container_registry.url}/docwriter-review:latest"
+    verify         = "${module.container_registry.url}/docwriter-verify:latest"
+    rewrite        = "${module.container_registry.url}/docwriter-rewrite:latest"
+    finalize       = "${module.container_registry.url}/docwriter-finalize:latest"
   }
   functions_env = {
     OPENAI_BASE_URL               = var.openai_base_url
