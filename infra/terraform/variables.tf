@@ -72,3 +72,8 @@ variable "spn-tenant-id" {
   description = "Tenant ID for service principal"
 }
 
+variable "docker_image_version" {
+  description = "Version tag of the Docker images to deploy"
+  type        = string
+  
+}

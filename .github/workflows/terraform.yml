@@ -1,6 +1,11 @@
 name: Terraform deploy
 on:
   workflow_dispatch:
+    inputs:
+      docker_image_version:
+        description: 'Docker image version to deploy'
+        required: true
+        default: 'latest'  # default value
 
 permissions:
   id-token: write
@@ -39,5 +44,5 @@ jobs:
     
       - name: Terraform Apply
         id: apply 
-        run: terraform apply --auto-approve -input=false -var="spn-client-id=${{secrets.SPN_CLIENT_ID}}" -var="spn-client-secret=${{secrets.SPN_CLIENT_SECRET}}" -var="spn-tenant-id=${{secrets.AZURE_TENANT_ID}}" -var="subscription-id=${{secrets.subscription_id}}" -var="openai_base_url=${{ secrets.openai_base_url }}" -var="openai_api_version=${{ secrets.openai_api_version }}" -var="openai_api_key_secret=${{ secrets.openai_api_key_secret }}"
+        run: terraform apply --auto-approve -input=false -var="spn-client-id=${{secrets.SPN_CLIENT_ID}}" -var="spn-client-secret=${{secrets.SPN_CLIENT_SECRET}}" -var="spn-tenant-id=${{secrets.AZURE_TENANT_ID}}" -var="subscription-id=${{secrets.subscription_id}}" -var="openai_base_url=${{ secrets.openai_base_url }}" -var="openai_api_version=${{ secrets.openai_api_version }}" -var="openai_api_key_secret=${{ secrets.openai_api_key_secret }}" -var="docker_image_version=${{ github.event.inputs.docker_image_version }}" 
         continue-on-error: false              

@@ -132,7 +132,7 @@ module "app" {
   managed_identity_id      = azurerm_user_assigned_identity.ca_identity.id
   container_registry_login  = module.container_registry.url
   tags                     = var.tags
-  api_image                = "${module.container_registry.url}/docwriter-api:latest"
+  api_image                = "${module.container_registry.url}/docwriter-api:${var.docker_image_version}"
   api_env = {
     OPENAI_BASE_URL               = var.openai_base_url
     OPENAI_API_VERSION            = var.openai_api_version
@@ -148,14 +148,14 @@ module "app" {
     AZURE_BLOB_CONTAINER          = "docwriter"
   }
   functions_images = {
-    plan-intake    = "${module.container_registry.url}/docwriter-plan-intake:latest"
-    intake-resume  = "${module.container_registry.url}/docwriter-intake-resume:latest"
-    plan           = "${module.container_registry.url}/docwriter-plan:latest"
-    write          = "${module.container_registry.url}/docwriter-write:latest"
-    review         = "${module.container_registry.url}/docwriter-review:latest"
-    verify         = "${module.container_registry.url}/docwriter-verify:latest"
-    rewrite        = "${module.container_registry.url}/docwriter-rewrite:latest"
-    finalize       = "${module.container_registry.url}/docwriter-finalize:latest"
+    plan-intake    = "${module.container_registry.url}/docwriter-plan-intake:${var.docker_image_version}"
+    intake-resume  = "${module.container_registry.url}/docwriter-intake-resume:${var.docker_image_version}"
+    plan           = "${module.container_registry.url}/docwriter-plan:${var.docker_image_version}"
+    write          = "${module.container_registry.url}/docwriter-write:${var.docker_image_version}"
+    review         = "${module.container_registry.url}/docwriter-review:${var.docker_image_version}"
+    verify         = "${module.container_registry.url}/docwriter-verify:${var.docker_image_version}"
+    rewrite        = "${module.container_registry.url}/docwriter-rewrite:${var.docker_image_version}"
+    finalize       = "${module.container_registry.url}/docwriter-finalize:${var.docker_image_version}"
   }
   functions_env = {
     OPENAI_BASE_URL               = var.openai_base_url

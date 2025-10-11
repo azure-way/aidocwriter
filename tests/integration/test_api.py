@@ -48,7 +48,7 @@ def client(monkeypatch):
 
     class FakeInterviewer:
         def propose_questions(self, title: str):
-            return [{"id": "audience", "q": f"Audience for {title}?"}]
+            return [{"id": "audience", "q": f"Audience for {title}?", "sample": "Integration architects"}]
 
     monkeypatch.setattr("api.routers.jobs.send_job", fake_send_job)
     monkeypatch.setattr("api.routers.jobs.send_resume", fake_send_resume)

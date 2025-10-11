@@ -51,6 +51,7 @@ class IntakeQuestionsRequest(BaseModel):
 class IntakeQuestion(BaseModel):
     id: str
     q: str
+    sample: str = ""
 
 
 class IntakeQuestionsResponse(BaseModel):

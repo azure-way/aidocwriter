@@ -13,6 +13,7 @@ import {
 interface IntakeQuestion {
   id: string;
   q: string;
+  sample: string;
 }
 
 interface StatusPayload {
@@ -72,7 +73,7 @@ export default function Home() {
       setQuestions(incomingQuestions);
       const defaults: Record<string, string> = {};
       incomingQuestions.forEach((q) => {
-        defaults[q.id] = "";
+        defaults[q.id] = q.sample ?? "";
       });
       setAnswers(defaults);
       setStep(2);

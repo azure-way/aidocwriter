@@ -310,6 +310,13 @@ def process_plan_intake(data: Dict[str, Any], interviewer: InterviewerAgent | No
             store.put_text(
                 blob=f"jobs/{data['job_id']}/intake/context.json", text=json.dumps(data, indent=2)
             )
+            sample_answers = {
+                str(item.get("id")): item.get("sample", "") for item in questions if isinstance(item, dict)
+            }
+            store.put_text(
+                blob=f"jobs/{data['job_id']}/intake/sample_answers.json",
+                text=json.dumps(sample_answers, indent=2),
+            )
         except Exception:
             pass
     _status(

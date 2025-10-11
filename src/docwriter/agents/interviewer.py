@@ -8,18 +8,66 @@ from ..llm import LLMClient, LLMMessage
 
 
 DEFAULT_QUESTIONS: List[Dict[str, Any]] = [
-    {"id": "audience", "q": "Who is the primary audience? (roles, seniority, background)"},
-    {"id": "goals", "q": "What are the main goals of this document?"},
-    {"id": "non_goals", "q": "What is explicitly out of scope?"},
-    {"id": "constraints", "q": "Any constraints (tech stack, compliance, budget, timeline)?"},
-    {"id": "tone", "q": "Preferred tone (formal, pragmatic, tutorial, RFC-like)?"},
-    {"id": "pov", "q": "Point of view (1st person plural, neutral, instructive)?"},
-    {"id": "structure", "q": "Any structure preferences (chapters, case studies, appendices)?"},
-    {"id": "must_cover", "q": "Mandatory topics/keywords to cover?"},
-    {"id": "must_avoid", "q": "Topics to avoid?"},
-    {"id": "references", "q": "Links or references the doc should align with?"},
-    {"id": "diagrams", "q": "Which diagrams are needed (types, key entities/flows)?"},
-    {"id": "context", "q": "Company/product context that must be reflected?"},
+    {
+        "id": "audience",
+        "q": "Who is the primary audience? (roles, seniority, background)",
+        "sample": "Enterprise integration architects and senior platform engineers overseeing Azure integration projects.",
+    },
+    {
+        "id": "goals",
+        "q": "What are the main goals of this document?",
+        "sample": "Provide integration design patterns, implementation guidance, and governance practices for Azure-based asynchronous/synchronous workloads.",
+    },
+    {
+        "id": "non_goals",
+        "q": "What is explicitly out of scope?",
+        "sample": "Detailed language-specific coding tutorials or walkthroughs for on-prem middleware migrations.",
+    },
+    {
+        "id": "constraints",
+        "q": "Any constraints (tech stack, compliance, budget, timeline)?",
+        "sample": "Must align with the Azure Well-Architected Framework, support global scale, and meet strict latency/SLA requirements.",
+    },
+    {
+        "id": "tone",
+        "q": "Preferred tone (formal, pragmatic, tutorial, RFC-like)?",
+        "sample": "Authoritative, pragmatic, and executive-ready.",
+    },
+    {
+        "id": "pov",
+        "q": "Point of view (1st person plural, neutral, instructive)?",
+        "sample": "Neutral advisory viewpoint with platform-owner recommendations.",
+    },
+    {
+        "id": "structure",
+        "q": "Any structure preferences (chapters, case studies, appendices)?",
+        "sample": "Executive summary, pattern overview, async patterns, sync patterns, hybrid orchestration, observability, case studies, appendices.",
+    },
+    {
+        "id": "must_cover",
+        "q": "Mandatory topics/keywords to cover?",
+        "sample": "Azure Service Bus, Event Grid, Logic Apps, API Management, retry policies, idempotency, back-pressure handling, monitoring.",
+    },
+    {
+        "id": "must_avoid",
+        "q": "Topics to avoid?",
+        "sample": "Vendor-specific marketing claims or legacy-only middleware deep dives beyond coexistence notes.",
+    },
+    {
+        "id": "references",
+        "q": "Links or references the doc should align with?",
+        "sample": "Microsoft Learn integration services documentation, Azure Architecture Center integration patterns.",
+    },
+    {
+        "id": "diagrams",
+        "q": "Which diagrams are needed (types, key entities/flows)?",
+        "sample": "High-level architecture showing async vs sync integrations plus a sequence diagram illustrating request-to-event choreography.",
+    },
+    {
+        "id": "context",
+        "q": "Company/product context that must be reflected?",
+        "sample": "Global retail enterprise modernizing POS integrations while integrating with ERP, CRM, and analytics systems.",
+    },
 ]
 
 
@@ -36,7 +84,7 @@ class InterviewerAgent:
     def propose_questions(self, title: str) -> List[Dict[str, Any]]:
         """Propose an expanded, prioritized question list based on the title.
 
-        Returns a list of {id, q}.
+        Returns a list of {id, q, sample}.
         """
         try:
             sys = (
@@ -45,8 +93,9 @@ class InterviewerAgent:
                 " technical document."
             )
             guide = (
-                "Return ONLY JSON list of {id, q}. Include audience, goals, constraints, tone, pov,"
-                " structure, must_cover, must_avoid, references, diagrams, context, and any other critical items."
+                "Return ONLY JSON list of objects {id, q, sample}. Ensure sample is a concise default answer."
+                " Include questions for audience, goals, constraints, tone, pov, structure, must_cover, must_avoid, references, diagrams, context,"
+                " and any other key details needed to plan a 60+ page technical document."
             )
             out = self.llm.chat(
                 model=self.settings.planner_model,
@@ -59,10 +108,10 @@ class InterviewerAgent:
             if isinstance(out, str):
                 data = json.loads(out)
                 if isinstance(data, list) and data:
-                    return data
+                    return self._normalize_questions(data)
         except Exception:
             pass
-        return DEFAULT_QUESTIONS
+        return self._normalize_questions(DEFAULT_QUESTIONS)
 
     def propose_followups(self, title: str, answers: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Propose follow-up questions to close gaps based on answers."""
@@ -88,3 +137,16 @@ class InterviewerAgent:
         except Exception:
             pass
         return []
+
+    def _normalize_questions(self, raw: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        normalized: List[Dict[str, Any]] = []
+        for idx, item in enumerate(raw):
+            if not isinstance(item, dict):
+                continue
+            q_id = str(item.get("id") or f"q{idx+1}")
+            question = str(item.get("q") or item.get("question") or "")
+            if not question:
+                continue
+            sample = item.get("sample") or item.get("sample_answer") or item.get("example") or ""
+            normalized.append({"id": q_id, "q": question, "sample": str(sample)})
+        return normalized
