@@ -113,6 +113,12 @@ module "service_bus" {
   depends_on = [ azurerm_role_assignment.principal_rbac ]
 }
 
+resource "time_sleep" "wait_60_seconds" {
+  create_duration = "60s"
+
+  depends_on = [ azurerm_role_assignment.service_bus_secret_reader, azurerm_role_assignment.storage_secret_reader, azurerm_role_assignment.open_ai_key_secret_reader ]
+}
+
 module "app" {
   source                   = "./modules/app"
   name_prefix              = local.name_prefix
@@ -182,5 +188,5 @@ module "app" {
     }
   ]
 
-  depends_on = [ azurerm_role_assignment.service_bus_secret_reader, azurerm_role_assignment.storage_secret_reader, azurerm_role_assignment.open_ai_key_secret_reader ]
+  depends_on = [ time_sleep.wait_60_seconds ]
 }
