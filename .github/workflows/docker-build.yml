@@ -67,7 +67,7 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          push: true
           tags: |
             ${{ secrets.ACR_LOGIN_SERVER }}/${{ matrix.image_name }}:latest
             ${{ secrets.ACR_LOGIN_SERVER }}/${{ matrix.image_name }}:v${{ steps.version.outputs.version }}
@@ -102,7 +102,7 @@ jobs:
         with:
           context: .
           file: Dockerfile.api
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          push: true
           tags: |
             ${{ secrets.ACR_LOGIN_SERVER }}/docwriter-api:latest
             ${{ secrets.ACR_LOGIN_SERVER }}/docwriter-api:v${{ needs.build.outputs.version }}
