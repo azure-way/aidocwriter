@@ -108,14 +108,13 @@ module "app" {
   location                 = azurerm_resource_group.main.location
   resource_group_name      = azurerm_resource_group.main.name
   log_analytics_id         = module.monitoring.log_analytics_id
-  managed_identity_id = azurerm_user_assigned_identity.ca_identity.client_id
-  container_registry_login = module.container_registry.login_server
+  managed_identity_id      = azurerm_user_assigned_identity.ca_identity.id
+  container_registry_login  = module.container_registry.url
   tags                     = var.tags
-  api_image                = "${module.container_registry.login_server}/docwriter-api:v1"
+  api_image                = "${module.container_registry.url}/docwriter-api:v1"
   api_env = {
     OPENAI_BASE_URL               = var.openai_base_url
     OPENAI_API_VERSION            = var.openai_api_version
-    SERVICE_BUS_CONNECTION_STRING = module.service_bus.primary_connection_string
     SERVICE_BUS_QUEUE_PLAN_INTAKE = "docwriter-plan-intake"
     SERVICE_BUS_QUEUE_INTAKE_RESUME = "docwriter-intake-resume"
     SERVICE_BUS_QUEUE_PLAN        = "docwriter-plan"
@@ -125,23 +124,21 @@ module "app" {
     SERVICE_BUS_QUEUE_REWRITE     = "docwriter-rewrite"
     SERVICE_BUS_QUEUE_FINALIZE    = "docwriter-finalize"
     SERVICE_BUS_TOPIC_STATUS      = "docwriter-status"
-    AZURE_STORAGE_CONNECTION_STRING = module.storage.connection_string
     AZURE_BLOB_CONTAINER          = "docwriter"
   }
   functions_images = {
-    plan-intake    = "${module.container_registry.login_server}/docwriter-plan-intake:v1"
-    intake-resume  = "${module.container_registry.login_server}/docwriter-intake-resume:v1"
-    plan           = "${module.container_registry.login_server}/docwriter-plan:v1"
-    write          = "${module.container_registry.login_server}/docwriter-write:v1"
-    review         = "${module.container_registry.login_server}/docwriter-review:v1"
-    verify         = "${module.container_registry.login_server}/docwriter-verify:v1"
-    rewrite        = "${module.container_registry.login_server}/docwriter-rewrite:v1"
-    finalize       = "${module.container_registry.login_server}/docwriter-finalize:v1"
+    plan-intake    = "${module.container_registry.url}/docwriter-plan-intake:v1"
+    intake-resume  = "${module.container_registry.url}/docwriter-intake-resume:v1"
+    plan           = "${module.container_registry.url}/docwriter-plan:v1"
+    write          = "${module.container_registry.url}/docwriter-write:v1"
+    review         = "${module.container_registry.url}/docwriter-review:v1"
+    verify         = "${module.container_registry.url}/docwriter-verify:v1"
+    rewrite        = "${module.container_registry.url}/docwriter-rewrite:v1"
+    finalize       = "${module.container_registry.url}/docwriter-finalize:v1"
   }
   functions_env = {
     OPENAI_BASE_URL               = var.openai_base_url
     OPENAI_API_VERSION            = var.openai_api_version
-    SERVICE_BUS_CONNECTION_STRING = module.service_bus.primary_connection_string
     SERVICE_BUS_QUEUE_PLAN_INTAKE = "docwriter-plan-intake"
     SERVICE_BUS_QUEUE_INTAKE_RESUME = "docwriter-intake-resume"
     SERVICE_BUS_QUEUE_PLAN        = "docwriter-plan"
@@ -151,7 +148,6 @@ module "app" {
     SERVICE_BUS_QUEUE_REWRITE     = "docwriter-rewrite"
     SERVICE_BUS_QUEUE_FINALIZE    = "docwriter-finalize"
     SERVICE_BUS_TOPIC_STATUS      = "docwriter-status"
-    AZURE_STORAGE_CONNECTION_STRING = module.storage.connection_string
     AZURE_BLOB_CONTAINER          = "docwriter"
   }
   api_secrets = [

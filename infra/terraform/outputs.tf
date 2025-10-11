@@ -17,14 +17,3 @@ output "resource_group_name" {
 output "service_bus_namespace_name" {
   value = module.service_bus.namespace_name
 }
-
-output "service_bus_connection_string" {
-  value       = module.service_bus.primary_connection_string
-  description = "Primary connection string for Azure Service Bus namespace"
-  sensitive   = true
-}
-
-output "storage_account_connection_string" {
-  value       = module.storage.connection_string
-  sensitive   = true
-}

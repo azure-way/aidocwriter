@@ -62,9 +62,9 @@ resource "azurerm_container_app" "api" {
   dynamic "secret" {
     for_each = var.api_secrets
     content {
-      name  = secret.value.name
-      value = secret.value.key_vault_secret_id
-      identity = secret.value.identity
+      name                = secret.value.name
+      key_vault_secret_id = secret.value.key_vault_secret_id
+      identity            = secret.value.identity
     }
   }
 }
@@ -72,7 +72,7 @@ resource "azurerm_container_app" "api" {
 resource "azurerm_container_app" "functions" {
   for_each = var.functions_images
 
-  name                         = "${var.name_prefix}-functions-${each.key}"
+  name                         = "${each.key}"
   resource_group_name          = var.resource_group_name
   container_app_environment_id = azurerm_container_app_environment.main.id
   revision_mode                = "Single"
@@ -107,6 +107,23 @@ resource "azurerm_container_app" "functions" {
           value = env.value
         }
       }
+
+      dynamic "env" {
+        for_each = var.api_secrets
+        content {
+          name        = env.value.env_name
+          secret_name = env.value.name
+        }
+      }
+    }
+  }
+
+  dynamic "secret" {
+    for_each = var.api_secrets
+    content {
+      name                = secret.value.name
+      key_vault_secret_id = secret.value.key_vault_secret_id
+      identity            = secret.value.identity
     }
   }
 }
@@ -117,8 +134,4 @@ output "container_apps_environment_name" {
 
 output "api_url" {
   value = azurerm_container_app.api.ingress[0].fqdn
-}
-
-output "functions_container_app_name" {
-  value = azurerm_container_app.functions.name
 }
