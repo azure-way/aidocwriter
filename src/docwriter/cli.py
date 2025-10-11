@@ -36,7 +36,7 @@ def generate(
     audience = audience_option or audience
     if not title or not audience:
         raise typer.BadParameter("Both title and audience are required (use positional args or --title/--audience).")
-    job = Job(title=title, audience=audience, out=str(out), cycles=cycles)
+    job = Job(title=title, audience=audience, cycles=cycles)
     job_id = send_job(job)
     typer.echo(f"Enqueued job: {job_id}")
 
@@ -54,7 +54,7 @@ def plan(
     audience = audience_option or audience
     if not title or not audience:
         raise typer.BadParameter("Both title and audience are required (use positional args or --title/--audience).")
-    job = Job(title=title, audience=audience, out=str(out))
+    job = Job(title=title, audience=audience)
     job_id = send_job(job)
     typer.echo(f"Enqueued job: {job_id}")
 
@@ -73,7 +73,7 @@ def queue(
     audience = audience_option or audience
     if not title or not audience:
         raise typer.BadParameter("Both title and audience are required (use positional args or --title/--audience).")
-    job = Job(title=title, audience=audience, out=str(out), cycles=cycles)
+    job = Job(title=title, audience=audience, cycles=cycles)
     job_id = send_job(job)
     typer.echo(f"Enqueued job: {job_id}")
 

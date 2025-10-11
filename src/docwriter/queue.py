@@ -69,7 +69,7 @@ def _configure_logging(worker_name: str) -> None:
 class Job:
     title: str
     audience: str
-    out: str
+    out: str = ""
     job_id: str | None = None
     cycles: int = 1
 
@@ -108,11 +108,16 @@ def _status(payload: Dict[str, Any]) -> None:
 
 def send_job(job: Job) -> str:
     job_id = job.job_id or str(uuid.uuid4())
+    try:
+        store = BlobStore()
+        blob_path = store.allocate_document_blob(job_id)
+    except Exception:
+        blob_path = job.out or f"/tmp/{job_id}_document.md"
     payload = {
         "job_id": job_id,
         "title": job.title,
         "audience": job.audience,
-        "out": job.out,
+        "out": blob_path,
         "cycles_remaining": max(1, int(job.cycles)),
         "cycles_completed": 0,
     }
@@ -159,6 +164,11 @@ def send_resume(job_id: str) -> None:
             )
     except Exception:
         pass
+    if not isinstance(payload.get("out"), str) or not payload.get("out"):
+        try:
+            payload["out"] = BlobStore().allocate_document_blob(job_id)
+        except Exception:
+            payload["out"] = f"/tmp/{job_id}_document.md"
     _send(settings.sb_queue_intake_resume, payload)
 
 
@@ -402,37 +412,32 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
     settings = get_settings()
     writer = writer or WriterAgent()
     summarizer = summarizer or Summarizer()
-    out_path = Path(data.get("out", f"./{data['job_id']}_document.md")).expanduser().resolve()
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    blob_path = data.get("out")
+    if not isinstance(blob_path, str) or not blob_path:
+        blob_path = BlobStore().allocate_document_blob(data["job_id"])
 
     with stage_timer(job_id=data["job_id"], stage="WRITE"):
         plan = data["plan"]
-        if out_path.exists():
-            out_path.unlink()
-        out_path.touch()
         outline = plan.get("outline", [])
         graph = build_dependency_graph(outline)
         order = graph.topological_order() if outline else []
         id_to_section = {str(s.get("id")): s for s in outline}
         dependency_summaries = data.get("dependency_summaries", {})
+        document_text_parts: list[str] = []
         for sid in order:
             section = id_to_section[sid]
             deps = section.get("dependencies", []) or []
             dep_context = "\n".join([dependency_summaries.get(str(d), "") for d in deps if dependency_summaries.get(str(d))])
-            chunks = writer.write_section(plan=plan, section=section, dependency_context=dep_context)
-            with out_path.open("a", encoding="utf-8") as fh:
-                for ch in chunks:
-                    fh.write(ch)
-                fh.write("\n\n")
-            summary = summarizer.summarize_section(out_path.read_text(encoding="utf-8"))
+            section_output = "".join(list(writer.write_section(plan=plan, section=section, dependency_context=dep_context)))
+            document_text_parts.append(section_output)
+            summary = summarizer.summarize_section("\n\n".join(document_text_parts))
             dependency_summaries[sid] = summary
-    payload = {**data, "out": str(out_path), "dependency_summaries": dependency_summaries}
+        document_text = "\n\n".join(document_text_parts)
+    payload = {**data, "out": blob_path, "dependency_summaries": dependency_summaries}
     try:
         store = BlobStore()
-        store.put_text(
-            blob=f"jobs/{data['job_id']}/draft.md",
-            text=out_path.read_text(encoding="utf-8"),
-        )
+        store.put_text(blob=blob_path, text=document_text)
+        store.put_text(blob=f"jobs/{data['job_id']}/draft.md", text=document_text)
     except Exception:
         pass
     _send(settings.sb_queue_review, payload)
@@ -443,8 +448,8 @@ def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) 
     settings = get_settings()
     reviewer = reviewer or ReviewerAgent()
     with stage_timer(job_id=data["job_id"], stage="REVIEW", cycle=int(data.get("cycles_completed", 0)) + 1):
-        out = Path(data["out"]).expanduser().resolve()
-        draft = out.read_text(encoding="utf-8")
+        store = BlobStore()
+        draft = store.get_text(blob=data["out"])
         review_json = reviewer.review(plan=data["plan"], draft_markdown=draft)
         style = StyleReviewerAgent().review_style(plan=data["plan"], markdown=draft)
         cohesion = CohesionReviewerAgent().review_cohesion(plan=data["plan"], markdown=draft)
@@ -470,8 +475,8 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
     settings = get_settings()
     verifier = verifier or VerifierAgent()
     with stage_timer(job_id=data["job_id"], stage="VERIFY", cycle=int(data.get("cycles_completed", 0)) + 1):
-        out = Path(data["out"]).expanduser().resolve()
-        draft = out.read_text(encoding="utf-8")
+        store = BlobStore()
+        draft = store.get_text(blob=data["out"])
         cycle_idx = int(data.get("cycles_completed", 0)) + 1
         try:
             review_data = json.loads(data.get("review_json", "{}"))
@@ -479,10 +484,9 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
             if isinstance(revised, str) and revised.strip():
                 merged = _merge_revised_markdown(draft, revised)
                 if merged != draft:
-                    out.write_text(merged)
                     draft = merged
                     try:
-                        store = BlobStore()
+                        store.put_text(blob=data["out"], text=merged)
                         store.put_text(
                             blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/revision.md",
                             text=merged,
@@ -543,8 +547,8 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
     writer = writer or WriterAgent()
     with stage_timer(job_id=data["job_id"], stage="REWRITE", cycle=int(data.get("cycles_completed", 0)) + 1):
         plan = data["plan"]
-        out = Path(data["out"]).expanduser().resolve()
-        text = out.read_text(encoding="utf-8")
+        store = BlobStore()
+        text = store.get_text(blob=data["out"])
         cycle_idx = int(data.get("cycles_completed", 0)) + 1
         try:
             verification = json.loads(data.get("verification_json", "{}"))
@@ -594,13 +598,9 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
                 if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
                     end_idx += len(end_marker)
                     text = text[:start_idx] + new_text + text[end_idx:]
-            out.write_text(text)
+            store.put_text(blob=data["out"], text=text)
             try:
-                store = BlobStore()
-                store.put_text(
-                    blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/rewrite.md",
-                    text=text,
-                )
+                store.put_text(blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/rewrite.md", text=text)
             except Exception:
                 pass
     payload = {
@@ -616,12 +616,14 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
 def process_finalize(data: Dict[str, Any]) -> None:
     with stage_timer(job_id=data["job_id"], stage="FINALIZE"):
         try:
-            out = Path(data["out"]).expanduser().resolve()
-            final_text = out.read_text(encoding="utf-8")
-            final_text, image_paths = _replace_mermaid_with_images(final_text, out)
-            if image_paths:
-                out.write_text(final_text, encoding="utf-8")
             store = BlobStore()
+            final_text = store.get_text(blob=data["out"])
+            tmp_dir = Path(tempfile.mkdtemp())
+            markdown_path = tmp_dir / "document.md"
+            markdown_path.write_text(final_text, encoding="utf-8")
+            final_text, image_paths = _replace_mermaid_with_images(final_text, markdown_path)
+            markdown_path.write_text(final_text, encoding="utf-8")
+            store.put_text(blob=data["out"], text=final_text)
             store.put_text(blob=f"jobs/{data['job_id']}/final.md", text=final_text)
             for idx, img_path in enumerate(image_paths, start=1):
                 try:
@@ -632,10 +634,10 @@ def process_finalize(data: Dict[str, Any]) -> None:
                 except Exception:
                     logging.exception("Failed to upload diagram %s for job %s", img_path, data.get("job_id"))
             exports: Dict[str, Path] = {}
-            pdf_path = _export_pdf(out)
+            pdf_path = _export_pdf(markdown_path)
             if pdf_path:
                 exports["pdf"] = pdf_path
-            docx_path = _export_docx(out)
+            docx_path = _export_docx(markdown_path)
             if docx_path:
                 exports["docx"] = docx_path
             for fmt, path in exports.items():

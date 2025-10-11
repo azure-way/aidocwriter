@@ -33,6 +33,9 @@ class BlobStore:
         except Exception:
             pass
 
+    def allocate_document_blob(self, job_id: str) -> str:
+        return f"jobs/{job_id}/draft.md"
+
     def put_text(self, blob: str, text: str) -> BlobPath:
         self.container.upload_blob(name=blob, data=text.encode("utf-8"), overwrite=True)
         return BlobPath(container=self.settings.blob_container, blob=blob)

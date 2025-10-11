@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from fastapi import APIRouter, Depends, HTTPException, status
 from azure.core.exceptions import ResourceNotFoundError
 
@@ -23,12 +22,9 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 @router.post("", response_model=JobCreateResponse, status_code=status.HTTP_202_ACCEPTED)
 def create_job(payload: JobCreateRequest) -> JobCreateResponse:
-    tmp_path = tempfile.NamedTemporaryFile(prefix="docwriter_", suffix=".md", delete=False)
-    tmp_path.close()
     job = Job(
         title=payload.title,
         audience=payload.audience,
-        out=tmp_path.name,
         cycles=payload.cycles,
     )
     job_id = send_job(job)
