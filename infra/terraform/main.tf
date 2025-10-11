@@ -72,7 +72,7 @@ resource "azurerm_key_vault_secret" "open_ai_key" {
   key_vault_id = azurerm_key_vault.rbac_example.id
 }
 
-resource "azurerm_role_assignment" "storage_secret_reader" {
+resource "azurerm_role_assignment" "open_ai_key_secret_reader" {
   scope                = azurerm_key_vault_secret.open_ai_key.id
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.ca_identity.principal_id
