@@ -211,6 +211,12 @@ module "app" {
       env_name            = "APPINSIGHTS_INSTRUMENTATION_KEY"
       key_vault_secret_id = module.monitoring.app_insights_kv_id
       identity            = azurerm_user_assigned_identity.ca_identity.id
+    },
+    {
+      name                = "app-insights-connection-string"
+      env_name            = "APPLICATIONINSIGHTS_CONNECTION_STRING"
+      key_vault_secret_id = module.monitoring.app_insights_connection_string_kv_id
+      identity            = azurerm_user_assigned_identity.ca_identity.id
     }
   ]
 
