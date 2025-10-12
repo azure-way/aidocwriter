@@ -74,6 +74,15 @@ resource "azurerm_role_assignment" "app_insights_secret_reader" {
   depends_on = [module.monitoring]
 }
 
+resource "azurerm_role_assignment" "app_insights_connection_string_reader" {
+  scope                = module.monitoring.app_insights_connection_string_secret_id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_user_assigned_identity.ca_identity.principal_id
+
+  depends_on = [module.monitoring]
+}
+
+
 resource "azurerm_key_vault_secret" "open_ai_key" {
   name         = "openai-key"
   value        = var.openai_api_key_secret
