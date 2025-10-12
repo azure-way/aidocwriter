@@ -92,6 +92,8 @@ resource "azurerm_container_app" "functions" {
   revision_mode                = "Single"
   tags                         = var.tags
 
+  workload_profile_name        = "Consumption"
+  
   identity {
     type         = "SystemAssigned, UserAssigned"
     identity_ids = [var.managed_identity_id]

@@ -195,6 +195,7 @@ module "app" {
     SERVICE_BUS_TOPIC_STATUS        = module.service_bus.topic_name
     SERVICE_BUS_STATUS_SUBSCRIPTION = "status-writer"
     AZURE_BLOB_CONTAINER            = "docwriter"
+    DOCWRITER_STATUS_TABLE          = "DocWriterStatus"
   }
   api_secrets = [
     {
