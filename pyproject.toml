@@ -23,6 +23,7 @@ dependencies = [
   "weasyprint>=62.0",
   "python-docx>=1.1.0",
   "tomli>=2.0.1",
+  "applicationinsights>=0.11.10",
   "azure-functions>=1.19.0",
   "fastapi>=0.111.0",
   "uvicorn>=0.30.0",

@@ -16,11 +16,23 @@ resource "azurerm_application_insights" "main" {
   tags                = var.tags
 }
 
+resource "azurerm_key_vault_secret" "secret_1" {
+  name         = "app-insights-instrumentation-key"
+  value        = azurerm_application_insights.main.instrumentation_key
+  key_vault_id = var.key_vault_id
+}
+
+
 output "log_analytics_id" {
   value = azurerm_log_analytics_workspace.main.id
 }
 
-output "application_insights_instrumentation_key" {
-  value     = azurerm_application_insights.main.instrumentation_key
-  sensitive = true
+output "app_insights_kv_id" {
+  value = azurerm_key_vault_secret.secret_1.versionless_id
+  
+}
+
+output "app_insights_secret_id" {
+  value = azurerm_key_vault_secret.secret_1.resource_versionless_id
+  
 }

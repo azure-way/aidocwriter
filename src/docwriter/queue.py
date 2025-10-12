@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, List
+from typing import Any, Dict, Optional, Tuple, List, Mapping
 from concurrent.futures import ThreadPoolExecutor
 import time
 
@@ -31,7 +31,7 @@ from .agents.verifier import VerifierAgent
 from .summary import Summarizer
 from .graph import build_dependency_graph
 from .storage import BlobStore
-from .telemetry import stage_timer
+from .telemetry import stage_timer, track_event, track_exception
 from .agents.interviewer import InterviewerAgent
 from .agents.style_reviewer import StyleReviewerAgent
 from .agents.cohesion_reviewer import CohesionReviewerAgent
@@ -85,9 +85,13 @@ def _sb_check():
 
 def _send(queue_name: str, payload: Dict[str, Any]) -> None:
     settings = _sb_check()
-    with ServiceBusClient.from_connection_string(settings.sb_connection_string) as client:
-        with client.get_queue_sender(queue_name) as sender:
-            sender.send_messages(ServiceBusMessage(json.dumps(payload)))
+    try:
+        with ServiceBusClient.from_connection_string(settings.sb_connection_string) as client:
+            with client.get_queue_sender(queue_name) as sender:
+                sender.send_messages(ServiceBusMessage(json.dumps(payload)))
+    except Exception as exc:
+        track_exception(exc, {"queue": queue_name})
+        raise
 
 
 def _status(payload: Dict[str, Any]) -> None:
@@ -96,14 +100,48 @@ def _status(payload: Dict[str, Any]) -> None:
         with ServiceBusClient.from_connection_string(settings.sb_connection_string) as client:
             with client.get_topic_sender(settings.sb_topic_status) as sender:
                 sender.send_messages(ServiceBusMessage(json.dumps(payload)))
-    except Exception:
-        pass
+    except Exception as exc:
+        track_exception(exc, {"topic": settings.sb_topic_status})
+        return
     try:  # mirror to API status store if available
         from api.status_store import status_store  # type: ignore
 
         status_store.record(payload)
     except Exception:
         pass
+    props = {k: str(v) for k, v in payload.items() if isinstance(v, (str, int, float))}
+    if "job_id" in payload:
+        props["job_id"] = str(payload["job_id"])
+    track_event("job_status", props)
+
+CYCLIC_STAGES: set[str] = {"REVIEW", "VERIFY", "REWRITE"}
+
+
+def _current_cycle(data: Mapping[str, Any]) -> Optional[int]:
+    try:
+        return int(data.get("cycles_completed", 0)) + 1
+    except Exception:
+        return None
+
+
+def _status_stage_event(
+    stage: str,
+    event: str,
+    data: Mapping[str, Any],
+    *,
+    extra: Optional[Mapping[str, Any]] = None,
+) -> None:
+    job_id = data.get("job_id")
+    if not job_id:
+        return
+    payload: Dict[str, Any] = {"job_id": job_id, "stage": f"{stage}_{event}", "ts": time.time()}
+    if stage in CYCLIC_STAGES:
+        cycle = _current_cycle(data)
+        if cycle is not None:
+            payload["cycle"] = cycle
+    if extra:
+        payload.update({k: v for k, v in extra.items() if v is not None})
+    _status(payload)
 
 
 def send_job(job: Job) -> str:
@@ -111,7 +149,8 @@ def send_job(job: Job) -> str:
     try:
         store = BlobStore()
         blob_path = store.allocate_document_blob(job_id)
-    except Exception:
+    except Exception as exc:
+        track_exception(exc, {"job_id": job_id, "operation": "allocate_document_blob"})
         blob_path = job.out or f"/tmp/{job_id}_document.md"
     payload = {
         "job_id": job_id,
@@ -123,7 +162,21 @@ def send_job(job: Job) -> str:
     }
     settings = get_settings()
     _send(settings.sb_queue_plan_intake, payload)
+    _status_stage_event(
+        "PLAN_INTAKE",
+        "QUEUED",
+        payload,
+        extra={"queue": settings.sb_queue_plan_intake},
+    )
     _status({"job_id": job_id, "stage": "ENQUEUED", "ts": time.time()})
+    track_event(
+        "job_enqueued",
+        {
+            "job_id": job_id,
+            "stage": "PLAN_INTAKE",
+            "cycles_remaining": str(payload["cycles_remaining"]),
+        },
+    )
     return job_id
 
 
@@ -133,7 +186,7 @@ def worker_plan_intake() -> None:
 
     def handle(_msg, data: Dict[str, Any]):
         process_plan_intake(data, interviewer)
-    _run_processor(settings.sb_queue_plan_intake, handle)
+    _run_processor(settings.sb_queue_plan_intake, handle, stage_name="PLAN_INTAKE")
 
 
 def worker_intake_resume() -> None:
@@ -142,7 +195,7 @@ def worker_intake_resume() -> None:
     def handle(_msg, data: Dict[str, Any]):
         process_intake_resume(data)
 
-    _run_processor(settings.sb_queue_intake_resume, handle)
+    _run_processor(settings.sb_queue_intake_resume, handle, stage_name="INTAKE_RESUME")
 
 
 def send_resume(job_id: str) -> None:
@@ -162,17 +215,30 @@ def send_resume(job_id: str) -> None:
                     "cycles_completed": context.get("cycles_completed"),
                 }
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        track_exception(exc, {"job_id": job_id, "operation": "load_intake_context"})
     if not isinstance(payload.get("out"), str) or not payload.get("out"):
         try:
             payload["out"] = BlobStore().allocate_document_blob(job_id)
-        except Exception:
+        except Exception as exc:
+            track_exception(exc, {"job_id": job_id, "operation": "allocate_document_blob_resume"})
             payload["out"] = f"/tmp/{job_id}_document.md"
     _send(settings.sb_queue_intake_resume, payload)
+    _status_stage_event(
+        "INTAKE_RESUME",
+        "QUEUED",
+        payload,
+        extra={"queue": settings.sb_queue_intake_resume},
+    )
+    track_event("job_resume_signal", {"job_id": job_id})
 
 
-def _run_processor(queue_name: str, handler, max_workers: int = 1) -> None:
+def _run_processor(
+    queue_name: str,
+    handler,
+    max_workers: int = 1,
+    stage_name: Optional[str] = None,
+) -> None:
     settings = _sb_check()
     renew_seconds = getattr(settings, "sb_lock_renew_s", 0)
     lock_renewer = None
@@ -185,7 +251,8 @@ def _run_processor(queue_name: str, handler, max_workers: int = 1) -> None:
                     while True:
                         try:
                             messages = receiver.receive_messages(max_message_count=10, max_wait_time=30)
-                        except Exception:
+                        except Exception as exc:
+                            track_exception(exc, {"queue": queue_name, "operation": "receive_messages"})
                             time.sleep(2)
                             continue
                         if not messages:
@@ -193,9 +260,20 @@ def _run_processor(queue_name: str, handler, max_workers: int = 1) -> None:
                         for msg in messages:
                             try:
                                 data = _decode_msg(msg)
-                            except Exception:
+                            except Exception as exc:
+                                track_exception(exc, {"queue": queue_name, "operation": "decode", "message_id": str(getattr(msg, "message_id", ""))})
                                 receiver.abandon_message(msg)
                                 continue
+                            if stage_name:
+                                try:
+                                    _status_stage_event(
+                                        stage_name,
+                                        "START",
+                                        data,
+                                        extra={"queue": queue_name},
+                                    )
+                                except Exception:
+                                    logging.exception("Failed to emit stage start event for %s", stage_name)
                             if lock_renewer is not None:
                                 try:
                                     lock_renewer.register(
@@ -209,6 +287,7 @@ def _run_processor(queue_name: str, handler, max_workers: int = 1) -> None:
                                         msg.message_id,
                                         renew_exc,
                                     )
+                                    track_exception(renew_exc, {"queue": queue_name, "operation": "lock_renew", "message_id": str(getattr(msg, "message_id", ""))})
                             fut = pool.submit(handler, msg, data)
                             try:
                                 fut.result()
@@ -217,6 +296,7 @@ def _run_processor(queue_name: str, handler, max_workers: int = 1) -> None:
                                 logging.exception(
                                     f"Message processing failed, abandoning message {msg.message_id}: {ex}"
                                 )
+                                track_exception(ex, {"queue": queue_name, "operation": "handler", "message_id": str(getattr(msg, "message_id", ""))})
                                 receiver.abandon_message(msg)
     finally:
         if lock_renewer is not None:
@@ -231,7 +311,7 @@ def worker_plan() -> None:
     def handle(_msg, data: Dict[str, Any]):
         process_plan(data, planner)
 
-    _run_processor(settings.sb_queue_plan, handle)
+    _run_processor(settings.sb_queue_plan, handle, stage_name="PLAN")
 
 
 def worker_write() -> None:
@@ -243,7 +323,7 @@ def worker_write() -> None:
     def handle(_msg, data: Dict[str, Any]):
         process_write(data, writer, summarizer)
 
-    _run_processor(settings.sb_queue_write, handle)
+    _run_processor(settings.sb_queue_write, handle, stage_name="WRITE")
 
 
 def worker_review() -> None:
@@ -254,7 +334,7 @@ def worker_review() -> None:
     def handle(_msg, data: Dict[str, Any]):
         process_review(data, reviewer)
 
-    _run_processor(settings.sb_queue_review, handle)
+    _run_processor(settings.sb_queue_review, handle, stage_name="REVIEW")
 
 
 def worker_verify() -> None:
@@ -265,7 +345,7 @@ def worker_verify() -> None:
     def handle(_msg, data: Dict[str, Any]):
         process_verify(data, verifier)
 
-    _run_processor(settings.sb_queue_verify, handle)
+    _run_processor(settings.sb_queue_verify, handle, stage_name="VERIFY")
 
 
 def worker_rewrite() -> None:
@@ -276,7 +356,7 @@ def worker_rewrite() -> None:
     def handle(_msg, data: Dict[str, Any]):
         process_rewrite(data, writer)
 
-    _run_processor(settings.sb_queue_rewrite, handle)
+    _run_processor(settings.sb_queue_rewrite, handle, stage_name="REWRITE")
 
 
 def worker_finalize() -> None:
@@ -286,7 +366,7 @@ def worker_finalize() -> None:
     def handle(_msg, data: Dict[str, Any]):
         process_finalize(data)
 
-    _run_processor(settings.sb_queue_finalize, handle)
+    _run_processor(settings.sb_queue_finalize, handle, stage_name="FINALIZE")
 
 
 def _decode_msg(msg) -> Dict[str, Any]:
@@ -307,8 +387,17 @@ def process_plan_intake(data: Dict[str, Any], interviewer: InterviewerAgent | No
             store.put_text(
                 blob=f"jobs/{data['job_id']}/intake/questions.json", text=json.dumps(questions, indent=2)
             )
+            context_snapshot = {
+                "job_id": data.get("job_id"),
+                "title": data.get("title"),
+                "audience": data.get("audience"),
+                "out": data.get("out"),
+                "cycles_remaining": data.get("cycles_remaining"),
+                "cycles_completed": data.get("cycles_completed"),
+            }
             store.put_text(
-                blob=f"jobs/{data['job_id']}/intake/context.json", text=json.dumps(data, indent=2)
+                blob=f"jobs/{data['job_id']}/intake/context.json",
+                text=json.dumps(context_snapshot, indent=2),
             )
             sample_answers = {
                 str(item.get("id")): item.get("sample", "") for item in questions if isinstance(item, dict)
@@ -317,8 +406,8 @@ def process_plan_intake(data: Dict[str, Any], interviewer: InterviewerAgent | No
                 blob=f"jobs/{data['job_id']}/intake/sample_answers.json",
                 text=json.dumps(sample_answers, indent=2),
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            track_exception(exc, {"job_id": data["job_id"], "stage": "PLAN_INTAKE"})
     _status(
         {
             "job_id": data["job_id"],
@@ -334,6 +423,12 @@ def process_plan_intake(data: Dict[str, Any], interviewer: InterviewerAgent | No
 def process_intake_resume(data: Dict[str, Any]) -> None:
     settings = get_settings()
     with stage_timer(job_id=data["job_id"], stage="INTAKE_RESUME"):
+        _status_stage_event(
+            "PLAN",
+            "QUEUED",
+            data,
+            extra={"queue": settings.sb_queue_plan},
+        )
         _send(settings.sb_queue_plan, data)
         _status({"job_id": data["job_id"], "stage": "INTAKE_RESUMED", "ts": time.time()})
 
@@ -408,8 +503,14 @@ def process_plan(data: Dict[str, Any], planner: PlannerAgent | None = None) -> N
             blob=f"jobs/{data['job_id']}/plan.json",
             text=json.dumps(payload["plan"], indent=2),
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        track_exception(exc, {"job_id": data["job_id"], "stage": "PLAN"})
+    _status_stage_event(
+        "WRITE",
+        "QUEUED",
+        payload,
+        extra={"queue": settings.sb_queue_write},
+    )
     _send(settings.sb_queue_write, payload)
     _status({"job_id": data["job_id"], "stage": "PLAN_DONE", "artifact": f"jobs/{data['job_id']}/plan.json", "ts": time.time()})
     print("[worker-plan] Dispatched job", data.get("job_id"), "to writing queue")
@@ -445,8 +546,14 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
         store = BlobStore()
         store.put_text(blob=blob_path, text=document_text)
         store.put_text(blob=f"jobs/{data['job_id']}/draft.md", text=document_text)
-    except Exception:
-        pass
+    except Exception as exc:
+        track_exception(exc, {"job_id": data["job_id"], "stage": "WRITE"})
+    _status_stage_event(
+        "REVIEW",
+        "QUEUED",
+        payload,
+        extra={"queue": settings.sb_queue_review},
+    )
     _send(settings.sb_queue_review, payload)
     _status({"job_id": data["job_id"], "stage": "WRITE_DONE", "artifact": f"jobs/{data['job_id']}/draft.md", "ts": time.time()})
 
@@ -472,8 +579,14 @@ def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) 
         store.put_text(blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/style.json", text=style)
         store.put_text(blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/cohesion.json", text=cohesion)
         store.put_text(blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/executive_summary.json", text=summary)
-    except Exception:
-        pass
+    except Exception as exc:
+        track_exception(exc, {"job_id": data["job_id"], "stage": "REVIEW"})
+    _status_stage_event(
+        "VERIFY",
+        "QUEUED",
+        payload,
+        extra={"queue": settings.sb_queue_verify},
+    )
     _send(settings.sb_queue_verify, payload)
     _status({"job_id": data["job_id"], "stage": "REVIEW_DONE", "ts": time.time(), "cycle": cycle_idx})
 
@@ -513,8 +626,8 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
             blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/contradictions.json",
             text=verification_json,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        track_exception(exc, {"job_id": data["job_id"], "stage": "VERIFY"})
     try:
         verification = json.loads(verification_json)
         contradictions = verification.get("contradictions", [])
@@ -532,8 +645,20 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
 
     if needs_rewrite and int(payload.get("cycles_remaining", 0)) > 0:
         payload["placeholder_sections"] = sorted(placeholder_sections)
+        _status_stage_event(
+            "REWRITE",
+            "QUEUED",
+            payload,
+            extra={"queue": settings.sb_queue_rewrite},
+        )
         _send(settings.sb_queue_rewrite, payload)
     else:
+        _status_stage_event(
+            "FINALIZE",
+            "QUEUED",
+            payload,
+            extra={"queue": settings.sb_queue_finalize},
+        )
         _send(settings.sb_queue_finalize, payload)
     _status(
         {
@@ -616,6 +741,12 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
         "cycles_completed": int(data.get("cycles_completed", 0)) + 1,
         "placeholder_sections": [],
     }
+    _status_stage_event(
+        "REVIEW",
+        "QUEUED",
+        payload,
+        extra={"queue": settings.sb_queue_review},
+    )
     _send(settings.sb_queue_review, payload)
     _status({"job_id": data["job_id"], "stage": "REWRITE_DONE", "cycle": cycle_idx, "ts": time.time()})
 

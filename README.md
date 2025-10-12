@@ -32,6 +32,7 @@ Quick Start (Queue-only)
      export SERVICE_BUS_TOPIC_STATUS=docwriter-status
      export AZURE_STORAGE_CONNECTION_STRING=...
      export AZURE_BLOB_CONTAINER=docwriter
+     export APPINSIGHTS_INSTRUMENTATION_KEY=... # optional, enables Application Insights telemetry
      ```
    - Optional overrides: `DOCWRITER_PLANNER_MODEL`, `DOCWRITER_WRITER_MODEL`, `DOCWRITER_STREAM`, etc. See `src/docwriter/config.py` for the full list.
 3) Run CLI
@@ -194,3 +195,79 @@ Testing
 
 Notes
 - This repo scaffolds the full flow. Real LLM calls require valid API keys and Azure Service Bus + Blob access.
+
+## Current Deployment & Operations Checklist (Snapshot)
+
+Use these steps to reconstruct the environment in a fresh session:
+
+1. **Container Images**
+   - Build or rely on the GitHub Actions workflow (`docker-build.yml`). Images push to `aidocwriteracr.azurecr.io` with tags `:latest` and `:v<git describe>`.
+   - Local build example from repo root:
+     ```bash
+     docker build --platform linux/amd64 -t aidocwriteracr.azurecr.io/docwriter-plan-intake:v1 -f src/functions_plan_intake/Dockerfile .
+     docker push aidocwriteracr.azurecr.io/docwriter-plan-intake:v1
+     # repeat for other functions + API (Dockerfile.api)
+     ```
+
+2. **Environment Variables (all runtimes)**
+   ```bash
+   export OPENAI_API_KEY=...
+   export OPENAI_BASE_URL=...
+   export OPENAI_API_VERSION=...
+   export SERVICE_BUS_CONNECTION_STRING=...
+   export SERVICE_BUS_QUEUE_PLAN_INTAKE=docwriter-plan-intake
+   export SERVICE_BUS_QUEUE_INTAKE_RESUME=docwriter-intake-resume
+   export SERVICE_BUS_QUEUE_PLAN=docwriter-plan
+   export SERVICE_BUS_QUEUE_WRITE=docwriter-write
+   export SERVICE_BUS_QUEUE_REVIEW=docwriter-review
+   export SERVICE_BUS_QUEUE_VERIFY=docwriter-verify
+   export SERVICE_BUS_QUEUE_REWRITE=docwriter-rewrite
+   export SERVICE_BUS_QUEUE_FINALIZE=docwriter-finalize
+   export SERVICE_BUS_TOPIC_STATUS=docwriter-status
+   export SERVICE_BUS_STATUS_SUBSCRIPTION=console
+   export AZURE_STORAGE_CONNECTION_STRING=...
+   export AZURE_BLOB_CONTAINER=docwriter
+   export APPINSIGHTS_INSTRUMENTATION_KEY=...
+   export NEXT_PUBLIC_API_BASE_URL=https://<api-fqdn>
+   ```
+
+3. **Terraform deployment**
+   - Secrets: `spn-client-id`, `spn-client-secret`, `spn-tenant-id`, `subscription-id`, `openai_base_url`, `openai_api_version`, `openai_api_key_secret`.
+   - Modules provision RG, ACR, Service Bus, Storage, App Insights, Container Apps.
+   - Container Apps module consumes `api_image`, `functions_images` (map of tags), `api_env`, `functions_env`, and optional `api_secrets` describing Key Vault secret IDs. Managed identity is granted `Key Vault Secrets User` at vault scope.
+   - Run:
+     ```bash
+     terraform -chdir=infra/terraform init
+     terraform -chdir=infra/terraform apply \
+       -var "spn-client-id=..." \
+       -var "spn-client-secret=..." \
+       -var "spn-tenant-id=..." \
+       -var "subscription-id=..." \
+       -var "openai_base_url=..." \
+       -var "openai_api_version=..." \
+       -var "openai_api_key_secret=..."
+     ```
+
+4. **Azure Application Insights**
+   - `APPINSIGHTS_INSTRUMENTATION_KEY` enables automatic event and exception tracking (`job_enqueued`, `job_status`, stage start/completion, and any errors via `track_exception`).
+   - Review telemetry for lost messages or failures.
+
+5. **Queue-driven Pipeline**
+   - Messages enqueue with blob-backed draft paths; all workers read/write documents in Blob Storage.
+   - Intake worker persists questions, context, and sample answers in `jobs/<id>/intake/...`. Resume pulls context blob to rebuild payload.
+   - Writers, reviewers, verifier, and rewriters operate entirely from blob payloads.
+
+6. **REST + UI**
+   - API endpoints: `/jobs`, `/jobs/{id}/resume`, `/jobs/{id}/status`, `/intake/questions`, `/healthz`.
+   - Next.js UI under `ui/` uses Tailwind glass theme; set `NEXT_PUBLIC_API_BASE_URL` before `npm run dev` or in deployment.
+   - Intake form pre-fills sample answers returned from the API.
+
+7. **CLI**
+   - `docwriter generate` / `docwriter resume` share the same queue helpers and require the env vars above.
+
+8. **Logging & Monitoring**
+   - Workers respect `LOG_DIR`/`DOCWRITER_LOG_LEVEL` for console/file logging.
+   - Application Insights now records all stage transitions and exceptions.
+
+9. **Local sample script**
+   - `scripts/run_sample_service_bus.sh` validates required env vars, enqueues a job, uploads sample answers, and signals resume.

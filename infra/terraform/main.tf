@@ -65,6 +65,14 @@ resource "azurerm_role_assignment" "storage_secret_reader" {
 
   depends_on = [ module.storage ]
 }
+
+resource "azurerm_role_assignment" "app_insights_secret_reader" {
+  scope                = module.monitoring.app_insights_secret_id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_user_assigned_identity.ca_identity.principal_id
+
+  depends_on = [ module.monitoring ]
+}
   
 resource "azurerm_key_vault_secret" "open_ai_key" {
   name         = "openai-key"
@@ -86,6 +94,7 @@ module "monitoring" {
   location            = azurerm_resource_group.main.location
   resource_group_name = azurerm_resource_group.main.name
   tags                = var.tags
+  key_vault_id        = azurerm_key_vault.rbac_example.id
 }
 
 module "storage" {
@@ -120,7 +129,11 @@ resource "time_sleep" "wait_60_seconds" {
     always_run = "${timestamp()}"
   }
 
-  depends_on = [ azurerm_role_assignment.service_bus_secret_reader, azurerm_role_assignment.storage_secret_reader, azurerm_role_assignment.open_ai_key_secret_reader ]
+  depends_on = [ 
+    azurerm_role_assignment.service_bus_secret_reader, 
+    azurerm_role_assignment.storage_secret_reader, 
+    azurerm_role_assignment.open_ai_key_secret_reader,
+    azurerm_role_assignment.app_insights_secret_reader]
 }
 
 module "app" {
@@ -188,6 +201,12 @@ module "app" {
       name = "storage-connection-string"
       env_name = "AZURE_STORAGE_CONNECTION_STRING"
       key_vault_secret_id = module.storage.connection_string_kv_id
+      identity = azurerm_user_assigned_identity.ca_identity.id
+    },
+    {
+      name = "app-insights-instrumentation-key"
+      env_name = "APPINSIGHTS_INSTRUMENTATION_KEY"
+      key_vault_secret_id = module.monitoring.app_insights_kv_id
       identity = azurerm_user_assigned_identity.ca_identity.id
     }
   ]
