@@ -1,11 +1,11 @@
 resource "azurerm_storage_account" "main" {
-  name                     = replace(lower("${var.name_prefix}sa"), "-", "")
-  resource_group_name      = var.resource_group_name
-  location                 = var.location
-  account_tier             = "Standard"
-  account_replication_type = "LRS"
+  name                       = replace(lower("${var.name_prefix}sa"), "-", "")
+  resource_group_name        = var.resource_group_name
+  location                   = var.location
+  account_tier               = "Standard"
+  account_replication_type   = "LRS"
   https_traffic_only_enabled = true
-  tags                     = var.tags
+  tags                       = var.tags
 }
 
 resource "azurerm_storage_container" "documents" {
@@ -26,10 +26,10 @@ output "account_name" {
 
 output "connection_string_kv_id" {
   value = azurerm_key_vault_secret.secret_1.versionless_id
-  
+
 }
 
 output "connection_string_secret_id" {
   value = azurerm_key_vault_secret.secret_1.resource_versionless_id
-  
+
 }

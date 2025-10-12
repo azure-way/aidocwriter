@@ -29,10 +29,10 @@ output "log_analytics_id" {
 
 output "app_insights_kv_id" {
   value = azurerm_key_vault_secret.secret_1.versionless_id
-  
+
 }
 
 output "app_insights_secret_id" {
   value = azurerm_key_vault_secret.secret_1.resource_versionless_id
-  
+
 }

@@ -13,21 +13,21 @@ resource "azurerm_servicebus_topic" "status" {
 }
 
 resource "azurerm_servicebus_subscription" "console" {
-  name                = "console"
-  topic_id            = azurerm_servicebus_topic.status.id
-  max_delivery_count  = 10
+  name               = "console"
+  topic_id           = azurerm_servicebus_topic.status.id
+  max_delivery_count = 10
 }
 
 resource "azurerm_servicebus_queue" "queues" {
-  for_each                     = toset(var.queues)
+  for_each = toset(var.queues)
 
-  name                         = each.value
-  namespace_id                 = azurerm_servicebus_namespace.main.id
+  name         = each.value
+  namespace_id = azurerm_servicebus_namespace.main.id
 
-  max_delivery_count           = 10
-  lock_duration                = "PT5M"
-  default_message_ttl          = "P14D"
-  
+  max_delivery_count  = 10
+  lock_duration       = "PT5M"
+  default_message_ttl = "P14D"
+
   dead_lettering_on_message_expiration = true
 }
 
@@ -47,10 +47,10 @@ output "topic_name" {
 
 output "connection_string_kv_id" {
   value = azurerm_key_vault_secret.secret_1.versionless_id
-  
+
 }
 
 output "connection_string_secret_id" {
   value = azurerm_key_vault_secret.secret_1.resource_versionless_id
-  
+
 }

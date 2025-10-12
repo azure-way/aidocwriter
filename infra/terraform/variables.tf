@@ -41,18 +41,18 @@ variable "service_bus_queues" {
 
 variable "openai_base_url" {
   type = string
-  
+
 }
 
 variable "openai_api_version" {
-  type = string 
-  
+  type = string
+
 }
 
 variable "openai_api_key_secret" {
   type      = string
   sensitive = true
-  
+
 }
 
 
@@ -75,5 +75,5 @@ variable "spn-tenant-id" {
 variable "docker_image_version" {
   description = "Version tag of the Docker images to deploy"
   type        = string
-  
+
 }

@@ -6,11 +6,11 @@ resource "azurerm_container_app_environment" "main" {
   tags                       = var.tags
 
   workload_profile {
-    name = "Consumption"
+    name                  = "Consumption"
     workload_profile_type = "Consumption"
-    maximum_count = 0
-    minimum_count = 0
-  }  
+    maximum_count         = 0
+    minimum_count         = 0
+  }
 }
 
 resource "azurerm_container_app" "api" {
@@ -59,10 +59,17 @@ resource "azurerm_container_app" "api" {
     allow_insecure_connections = false
     external_enabled           = true
     target_port                = 8000
-   
+
     traffic_weight {
-      percentage = 100
+      percentage      = 100
       latest_revision = true
+    }
+
+    cors {
+      allowed_origins    = ["http://localhost:3000"]
+      allowed_methods    = ["GET", "POST", "OPTIONS"]
+      allowed_headers    = ["*"]
+      max_age_in_seconds = 86400
     }
   }
 
@@ -79,7 +86,7 @@ resource "azurerm_container_app" "api" {
 resource "azurerm_container_app" "functions" {
   for_each = var.functions_images
 
-  name                         = "${each.key}"
+  name                         = each.key
   resource_group_name          = var.resource_group_name
   container_app_environment_id = azurerm_container_app_environment.main.id
   revision_mode                = "Single"

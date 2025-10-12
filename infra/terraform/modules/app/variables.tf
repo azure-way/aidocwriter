@@ -42,7 +42,7 @@ variable "tags" {
 }
 
 variable "managed_identity_id" {
-  type = string
+  type        = string
   description = "The ID of the managed identity to use for the container apps"
 }
 
@@ -50,10 +50,10 @@ variable "api_secrets" {
   description = "Secrets for the API container app"
 
   type = list(object({
-    name                  = string
-    env_name              = string
-    key_vault_secret_id   = string
-    identity              = string
+    name                = string
+    env_name            = string
+    key_vault_secret_id = string
+    identity            = string
   }))
   default = []
 }

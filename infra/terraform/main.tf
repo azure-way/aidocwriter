@@ -40,8 +40,8 @@ resource "azurerm_key_vault" "rbac_example" {
   soft_delete_retention_days  = 7
   purge_protection_enabled    = false
 
-  rbac_authorization_enabled  = true
-  sku_name                    = "standard"
+  rbac_authorization_enabled = true
+  sku_name                   = "standard"
 }
 
 resource "azurerm_role_assignment" "principal_rbac" {
@@ -55,7 +55,7 @@ resource "azurerm_role_assignment" "service_bus_secret_reader" {
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.ca_identity.principal_id
 
-  depends_on = [ module.service_bus ]
+  depends_on = [module.service_bus]
 }
 
 resource "azurerm_role_assignment" "storage_secret_reader" {
@@ -63,7 +63,7 @@ resource "azurerm_role_assignment" "storage_secret_reader" {
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.ca_identity.principal_id
 
-  depends_on = [ module.storage ]
+  depends_on = [module.storage]
 }
 
 resource "azurerm_role_assignment" "app_insights_secret_reader" {
@@ -71,9 +71,9 @@ resource "azurerm_role_assignment" "app_insights_secret_reader" {
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.ca_identity.principal_id
 
-  depends_on = [ module.monitoring ]
+  depends_on = [module.monitoring]
 }
-  
+
 resource "azurerm_key_vault_secret" "open_ai_key" {
   name         = "openai-key"
   value        = var.openai_api_key_secret
@@ -85,7 +85,7 @@ resource "azurerm_role_assignment" "open_ai_key_secret_reader" {
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.ca_identity.principal_id
 
-  depends_on = [ module.storage ]
+  depends_on = [module.storage]
 }
 
 module "monitoring" {
@@ -107,7 +107,7 @@ module "storage" {
 
   key_vault_id = azurerm_key_vault.rbac_example.id
 
-  depends_on = [ azurerm_role_assignment.principal_rbac ]
+  depends_on = [azurerm_role_assignment.principal_rbac]
 }
 
 module "service_bus" {
@@ -117,23 +117,23 @@ module "service_bus" {
   resource_group_name = azurerm_resource_group.main.name
   queues              = var.service_bus_queues
   tags                = var.tags
-  key_vault_id = azurerm_key_vault.rbac_example.id
+  key_vault_id        = azurerm_key_vault.rbac_example.id
 
-  depends_on = [ azurerm_role_assignment.principal_rbac ]
+  depends_on = [azurerm_role_assignment.principal_rbac]
 }
 
 resource "time_sleep" "wait_60_seconds" {
   create_duration = "60s"
-  
+
   triggers = {
     always_run = "${timestamp()}"
   }
 
-  depends_on = [ 
-    azurerm_role_assignment.service_bus_secret_reader, 
-    azurerm_role_assignment.storage_secret_reader, 
+  depends_on = [
+    azurerm_role_assignment.service_bus_secret_reader,
+    azurerm_role_assignment.storage_secret_reader,
     azurerm_role_assignment.open_ai_key_secret_reader,
-    azurerm_role_assignment.app_insights_secret_reader]
+  azurerm_role_assignment.app_insights_secret_reader]
 }
 
 module "app" {
@@ -143,73 +143,73 @@ module "app" {
   resource_group_name      = azurerm_resource_group.main.name
   log_analytics_id         = module.monitoring.log_analytics_id
   managed_identity_id      = azurerm_user_assigned_identity.ca_identity.id
-  container_registry_login  = module.container_registry.url
+  container_registry_login = module.container_registry.url
   tags                     = var.tags
   api_image                = "${module.container_registry.url}/docwriter-api:${var.docker_image_version}"
   api_env = {
-    OPENAI_BASE_URL               = var.openai_base_url
-    OPENAI_API_VERSION            = var.openai_api_version
-    SERVICE_BUS_QUEUE_PLAN_INTAKE = "docwriter-plan-intake"
+    OPENAI_BASE_URL                 = var.openai_base_url
+    OPENAI_API_VERSION              = var.openai_api_version
+    SERVICE_BUS_QUEUE_PLAN_INTAKE   = "docwriter-plan-intake"
     SERVICE_BUS_QUEUE_INTAKE_RESUME = "docwriter-intake-resume"
-    SERVICE_BUS_QUEUE_PLAN        = "docwriter-plan"
-    SERVICE_BUS_QUEUE_WRITE       = "docwriter-write"
-    SERVICE_BUS_QUEUE_REVIEW      = "docwriter-review"
-    SERVICE_BUS_QUEUE_VERIFY      = "docwriter-verify"
-    SERVICE_BUS_QUEUE_REWRITE     = "docwriter-rewrite"
-    SERVICE_BUS_QUEUE_FINALIZE    = "docwriter-finalize"
-    SERVICE_BUS_TOPIC_STATUS      = "docwriter-status"
-    AZURE_BLOB_CONTAINER          = "docwriter"
+    SERVICE_BUS_QUEUE_PLAN          = "docwriter-plan"
+    SERVICE_BUS_QUEUE_WRITE         = "docwriter-write"
+    SERVICE_BUS_QUEUE_REVIEW        = "docwriter-review"
+    SERVICE_BUS_QUEUE_VERIFY        = "docwriter-verify"
+    SERVICE_BUS_QUEUE_REWRITE       = "docwriter-rewrite"
+    SERVICE_BUS_QUEUE_FINALIZE      = "docwriter-finalize"
+    SERVICE_BUS_TOPIC_STATUS        = "docwriter-status"
+    AZURE_BLOB_CONTAINER            = "docwriter"
   }
   functions_images = {
-    plan-intake    = "${module.container_registry.url}/docwriter-plan-intake:${var.docker_image_version}"
-    intake-resume  = "${module.container_registry.url}/docwriter-intake-resume:${var.docker_image_version}"
-    plan           = "${module.container_registry.url}/docwriter-plan:${var.docker_image_version}"
-    write          = "${module.container_registry.url}/docwriter-write:${var.docker_image_version}"
-    review         = "${module.container_registry.url}/docwriter-review:${var.docker_image_version}"
-    verify         = "${module.container_registry.url}/docwriter-verify:${var.docker_image_version}"
-    rewrite        = "${module.container_registry.url}/docwriter-rewrite:${var.docker_image_version}"
-    finalize       = "${module.container_registry.url}/docwriter-finalize:${var.docker_image_version}"
+    plan-intake   = "${module.container_registry.url}/docwriter-plan-intake:${var.docker_image_version}"
+    intake-resume = "${module.container_registry.url}/docwriter-intake-resume:${var.docker_image_version}"
+    plan          = "${module.container_registry.url}/docwriter-plan:${var.docker_image_version}"
+    write         = "${module.container_registry.url}/docwriter-write:${var.docker_image_version}"
+    review        = "${module.container_registry.url}/docwriter-review:${var.docker_image_version}"
+    verify        = "${module.container_registry.url}/docwriter-verify:${var.docker_image_version}"
+    rewrite       = "${module.container_registry.url}/docwriter-rewrite:${var.docker_image_version}"
+    finalize      = "${module.container_registry.url}/docwriter-finalize:${var.docker_image_version}"
   }
   functions_env = {
-    OPENAI_BASE_URL               = var.openai_base_url
-    OPENAI_API_VERSION            = var.openai_api_version
-    SERVICE_BUS_QUEUE_PLAN_INTAKE = "docwriter-plan-intake"
+    OPENAI_BASE_URL                 = var.openai_base_url
+    OPENAI_API_VERSION              = var.openai_api_version
+    SERVICE_BUS_QUEUE_PLAN_INTAKE   = "docwriter-plan-intake"
     SERVICE_BUS_QUEUE_INTAKE_RESUME = "docwriter-intake-resume"
-    SERVICE_BUS_QUEUE_PLAN        = "docwriter-plan"
-    SERVICE_BUS_QUEUE_WRITE       = "docwriter-write"
-    SERVICE_BUS_QUEUE_REVIEW      = "docwriter-review"
-    SERVICE_BUS_QUEUE_VERIFY      = "docwriter-verify"
-    SERVICE_BUS_QUEUE_REWRITE     = "docwriter-rewrite"
-    SERVICE_BUS_QUEUE_FINALIZE    = "docwriter-finalize"
-    SERVICE_BUS_TOPIC_STATUS      = "docwriter-status"
-    AZURE_BLOB_CONTAINER          = "docwriter"
+    SERVICE_BUS_QUEUE_PLAN          = "docwriter-plan"
+    SERVICE_BUS_QUEUE_WRITE         = "docwriter-write"
+    SERVICE_BUS_QUEUE_REVIEW        = "docwriter-review"
+    SERVICE_BUS_QUEUE_VERIFY        = "docwriter-verify"
+    SERVICE_BUS_QUEUE_REWRITE       = "docwriter-rewrite"
+    SERVICE_BUS_QUEUE_FINALIZE      = "docwriter-finalize"
+    SERVICE_BUS_TOPIC_STATUS        = "docwriter-status"
+    AZURE_BLOB_CONTAINER            = "docwriter"
   }
   api_secrets = [
     {
-      name = "azure-openai-api-key"
-      env_name = "OPENAI_API_KEY"
+      name                = "azure-openai-api-key"
+      env_name            = "OPENAI_API_KEY"
       key_vault_secret_id = azurerm_key_vault_secret.open_ai_key.versionless_id
-      identity = azurerm_user_assigned_identity.ca_identity.id
+      identity            = azurerm_user_assigned_identity.ca_identity.id
     },
     {
-      name = "servicebus-connection-string"
-      env_name = "SERVICE_BUS_CONNECTION_STRING"
+      name                = "servicebus-connection-string"
+      env_name            = "SERVICE_BUS_CONNECTION_STRING"
       key_vault_secret_id = module.service_bus.connection_string_kv_id
-      identity = azurerm_user_assigned_identity.ca_identity.id
+      identity            = azurerm_user_assigned_identity.ca_identity.id
     },
     {
-      name = "storage-connection-string"
-      env_name = "AZURE_STORAGE_CONNECTION_STRING"
+      name                = "storage-connection-string"
+      env_name            = "AZURE_STORAGE_CONNECTION_STRING"
       key_vault_secret_id = module.storage.connection_string_kv_id
-      identity = azurerm_user_assigned_identity.ca_identity.id
+      identity            = azurerm_user_assigned_identity.ca_identity.id
     },
     {
-      name = "app-insights-instrumentation-key"
-      env_name = "APPINSIGHTS_INSTRUMENTATION_KEY"
+      name                = "app-insights-instrumentation-key"
+      env_name            = "APPINSIGHTS_INSTRUMENTATION_KEY"
       key_vault_secret_id = module.monitoring.app_insights_kv_id
-      identity = azurerm_user_assigned_identity.ca_identity.id
+      identity            = azurerm_user_assigned_identity.ca_identity.id
     }
   ]
 
-  depends_on = [ time_sleep.wait_60_seconds ]
+  depends_on = [time_sleep.wait_60_seconds]
 }

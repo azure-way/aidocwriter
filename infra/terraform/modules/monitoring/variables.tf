@@ -11,11 +11,11 @@ variable "resource_group_name" {
 }
 
 variable "tags" {
-  type = map(string)
+  type    = map(string)
   default = {}
 }
 
 variable "key_vault_id" {
   type = string
-  
+
 }
