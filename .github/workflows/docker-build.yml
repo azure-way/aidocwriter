@@ -33,6 +33,8 @@ jobs:
             image_name: docwriter-rewrite
           - dockerfile: src/functions_finalize/Dockerfile
             image_name: docwriter-finalize
+          - dockerfile: src/functions_status/Dockerfile
+            image_name: docwriter-status
 
     steps:
       - name: Checkout

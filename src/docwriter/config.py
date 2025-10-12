@@ -65,7 +65,7 @@ class Settings:
     sb_queue_verify: str = "docwriter-verify"
     sb_queue_rewrite: str = "docwriter-rewrite"
     sb_queue_finalize: str = "docwriter-finalize"
-    sb_topic_status: str = "docwriter-status"
+    sb_topic_status: str = os.getenv("DOCWRITER_DEFAULT_STATUS_TOPIC", "aidocwriter-status")
     sb_status_subscription: str = "console"
     sb_lock_renew_s: float = 900.0
 
@@ -77,6 +77,7 @@ class Settings:
     # Azure Blob Storage
     blob_connection_string: str | None = None
     blob_container: str = "docwriter"
+    status_table_name: str = os.getenv("DOCWRITER_STATUS_TABLE", "docwriter_status")
 
     # OpenTelemetry (optional)
     otlp_endpoint: str | None = None
@@ -114,6 +115,7 @@ class Settings:
             streaming=_coerce_bool(env.get("DOCWRITER_STREAM"), cls.streaming),
             blob_connection_string=env.get("AZURE_STORAGE_CONNECTION_STRING"),
             blob_container=env.get("AZURE_BLOB_CONTAINER", cls.blob_container),
+            status_table_name=env.get("DOCWRITER_STATUS_TABLE", cls.status_table_name),
             otlp_endpoint=env.get("OTEL_EXPORTER_OTLP_ENDPOINT"),
         )
 

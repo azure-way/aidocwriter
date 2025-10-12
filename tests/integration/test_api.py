@@ -9,14 +9,26 @@ from fastapi.testclient import TestClient
 from azure.core.exceptions import ResourceNotFoundError
 
 from api.main import app
-from api.status_store import status_store
+
+class FakeStatusTableStore:
+    def __init__(self) -> None:
+        self._latest: Dict[str, Dict] = {}
+
+    def record(self, payload: Dict) -> None:
+        job_id = payload.get("job_id")
+        if not job_id:
+            return
+        self._latest[job_id] = payload
+
+    def latest(self, job_id: str) -> Dict | None:
+        return self._latest.get(job_id)
 
 
 @pytest.fixture(autouse=True)
-def clear_status_store():
-    status_store._latest.clear()  # type: ignore[attr-defined]
-    yield
-    status_store._latest.clear()  # type: ignore[attr-defined]
+def fake_status_table(monkeypatch):
+    store = FakeStatusTableStore()
+    monkeypatch.setattr("docwriter.status_store.get_status_table_store", lambda: store)
+    yield store
 
 
 @pytest.fixture
@@ -102,13 +114,13 @@ def test_intake_questions_endpoint(client):
     assert payload["questions"][0]["q"].startswith("Audience for Async")
 
 
-def test_job_status_reflects_latest_event(client):
+def test_job_status_reflects_latest_event(client, fake_status_table):
     job_id = client.post(
         "/jobs",
         json={"title": "Doc", "audience": "Architects"},
     ).json()["job_id"]
 
-    status_store.record({"job_id": job_id, "stage": "PLAN", "cycle": 1})
+    fake_status_table.record({"job_id": job_id, "stage": "PLAN", "cycle": 1})
     resp = client.get(f"/jobs/{job_id}/status")
     assert resp.status_code == 200
     data = resp.json()

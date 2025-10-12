@@ -6,6 +6,7 @@ from azure.core.exceptions import ResourceNotFoundError
 
 from docwriter.queue import Job, send_job, send_resume
 from docwriter.storage import BlobStore
+from docwriter.status_store import get_status_table_store
 
 from ..deps import blob_store_dependency
 from ..models import (
@@ -15,8 +16,6 @@ from ..models import (
     ResumeResponse,
     StatusResponse,
 )
-from ..status_store import status_store
-
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
@@ -55,6 +54,10 @@ def resume_job(
 
 @router.get("/{job_id}/status", response_model=StatusResponse)
 def job_status(job_id: str) -> StatusResponse:
+    try:
+        status_store = get_status_table_store()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     latest = status_store.latest(job_id)
     if not latest:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found in status cache")

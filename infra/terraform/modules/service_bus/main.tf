@@ -18,6 +18,12 @@ resource "azurerm_servicebus_subscription" "console" {
   max_delivery_count = 10
 }
 
+resource "azurerm_servicebus_subscription" "status_writer" {
+  name               = "status-writer"
+  topic_id           = azurerm_servicebus_topic.status.id
+  max_delivery_count = 10
+}
+
 resource "azurerm_servicebus_queue" "queues" {
   for_each = toset(var.queues)
 

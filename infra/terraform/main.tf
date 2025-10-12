@@ -157,7 +157,8 @@ module "app" {
     SERVICE_BUS_QUEUE_VERIFY        = "docwriter-verify"
     SERVICE_BUS_QUEUE_REWRITE       = "docwriter-rewrite"
     SERVICE_BUS_QUEUE_FINALIZE      = "docwriter-finalize"
-    SERVICE_BUS_TOPIC_STATUS        = "docwriter-status"
+    SERVICE_BUS_TOPIC_STATUS        = module.service_bus.topic_name
+    SERVICE_BUS_STATUS_SUBSCRIPTION = "status-writer"
     AZURE_BLOB_CONTAINER            = "docwriter"
   }
   functions_images = {
@@ -169,6 +170,7 @@ module "app" {
     verify        = "${module.container_registry.url}/docwriter-verify:${var.docker_image_version}"
     rewrite       = "${module.container_registry.url}/docwriter-rewrite:${var.docker_image_version}"
     finalize      = "${module.container_registry.url}/docwriter-finalize:${var.docker_image_version}"
+    status        = "${module.container_registry.url}/docwriter-status:${var.docker_image_version}"
   }
   functions_env = {
     OPENAI_BASE_URL                 = var.openai_base_url
@@ -181,7 +183,8 @@ module "app" {
     SERVICE_BUS_QUEUE_VERIFY        = "docwriter-verify"
     SERVICE_BUS_QUEUE_REWRITE       = "docwriter-rewrite"
     SERVICE_BUS_QUEUE_FINALIZE      = "docwriter-finalize"
-    SERVICE_BUS_TOPIC_STATUS        = "docwriter-status"
+    SERVICE_BUS_TOPIC_STATUS        = module.service_bus.topic_name
+    SERVICE_BUS_STATUS_SUBSCRIPTION = "status-writer"
     AZURE_BLOB_CONTAINER            = "docwriter"
   }
   api_secrets = [

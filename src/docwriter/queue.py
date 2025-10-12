@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import io
 import json
 import re
 import uuid
@@ -39,6 +41,8 @@ from .agents.summary_reviewer import SummaryReviewerAgent
 
 
 LOG_CONFIGURED = False
+_SB_CLIENT: ServiceBusClient | None = None  # type: ignore[assignment]
+_SB_CONNECTION_STR: str | None = None
 
 
 def _configure_logging(worker_name: str) -> None:
@@ -83,32 +87,66 @@ def _sb_check():
     return settings
 
 
+def _get_servicebus_client(settings) -> ServiceBusClient:
+    global _SB_CLIENT, _SB_CONNECTION_STR
+    if ServiceBusClient is None:  # pragma: no cover - handled in _sb_check
+        raise RuntimeError("azure-servicebus not installed")
+    conn_str = settings.sb_connection_string
+    if not isinstance(conn_str, str) or not conn_str.strip():
+        raise RuntimeError("SERVICE_BUS_CONNECTION_STRING not set or empty")
+    if _SB_CLIENT is None or _SB_CONNECTION_STR != conn_str:
+        _SB_CLIENT = ServiceBusClient.from_connection_string(conn_str)
+        _SB_CONNECTION_STR = conn_str
+    return _SB_CLIENT
+
+
 def _send(queue_name: str, payload: Dict[str, Any]) -> None:
     settings = _sb_check()
     try:
-        with ServiceBusClient.from_connection_string(settings.sb_connection_string) as client:
-            with client.get_queue_sender(queue_name) as sender:
-                sender.send_messages(ServiceBusMessage(json.dumps(payload)))
+        client = _get_servicebus_client(settings)
+        with client.get_queue_sender(queue_name) as sender:
+            sender.send_messages(ServiceBusMessage(json.dumps(payload)))
     except Exception as exc:
         track_exception(exc, {"queue": queue_name})
         raise
 
 
+def _status_topics(settings) -> List[str]:
+    topics: List[str] = []
+    primary = settings.sb_topic_status
+    if primary:
+        topics.append(primary)
+    fallback_env = os.getenv("DOCWRITER_FALLBACK_STATUS_TOPIC")
+    if fallback_env and fallback_env not in topics:
+        topics.append(fallback_env)
+    default_topic = os.getenv("DOCWRITER_DEFAULT_STATUS_TOPIC", "aidocwriter-status")
+    if default_topic and default_topic not in topics:
+        topics.append(default_topic)
+    legacy_topic = "docwriter-status"
+    if legacy_topic not in topics:
+        topics.append(legacy_topic)
+    return topics
+
+
 def _status(payload: Dict[str, Any]) -> None:
     settings = _sb_check()
-    try:
-        with ServiceBusClient.from_connection_string(settings.sb_connection_string) as client:
-            with client.get_topic_sender(settings.sb_topic_status) as sender:
+    topics = _status_topics(settings)
+    sent = False
+    last_exc: Exception | None = None
+    for topic in topics:
+        try:
+            client = _get_servicebus_client(settings)
+            with client.get_topic_sender(topic) as sender:
                 sender.send_messages(ServiceBusMessage(json.dumps(payload)))
-    except Exception as exc:
-        track_exception(exc, {"topic": settings.sb_topic_status})
+            sent = True
+            break
+        except Exception as exc:
+            last_exc = exc
+            track_exception(exc, {"topic": topic})
+    if not sent:
+        if last_exc:
+            logging.error("Failed to publish status event to Service Bus: %s", last_exc)
         return
-    try:  # mirror to API status store if available
-        from api.status_store import status_store  # type: ignore
-
-        status_store.record(payload)
-    except Exception:
-        pass
     props = {k: str(v) for k, v in payload.items() if isinstance(v, (str, int, float))}
     if "job_id" in payload:
         props["job_id"] = str(payload["job_id"])
@@ -755,39 +793,26 @@ def process_finalize(data: Dict[str, Any]) -> None:
     with stage_timer(job_id=data["job_id"], stage="FINALIZE"):
         try:
             store = BlobStore()
-            final_text = store.get_text(blob=data["out"])
-            tmp_dir = Path(tempfile.mkdtemp())
-            markdown_path = tmp_dir / "document.md"
-            markdown_path.write_text(final_text, encoding="utf-8")
-            final_text, image_paths = _replace_mermaid_with_images(final_text, markdown_path)
-            markdown_path.write_text(final_text, encoding="utf-8")
-            store.put_text(blob=data["out"], text=final_text)
-            store.put_text(blob=f"jobs/{data['job_id']}/final.md", text=final_text)
-            for idx, img_path in enumerate(image_paths, start=1):
+            job_id = data["job_id"]
+            target_blob = data["out"]
+            final_text = store.get_text(blob=target_blob)
+            final_text, image_map = _replace_mermaid_with_images(final_text, job_id, store)
+            # store.put_text(blob=target_blob, text=final_text)
+            store.put_text(blob=f"jobs/{job_id}/final.md", text=final_text)
+            pdf_bytes = _export_pdf(final_text, image_map, store, job_id)
+            if pdf_bytes:
                 try:
-                    store.put_bytes(
-                        blob=f"jobs/{data['job_id']}/images/diagram_{idx}{img_path.suffix}",
-                        data_bytes=img_path.read_bytes(),
-                    )
+                    store.put_bytes(blob=f"jobs/{job_id}/final.pdf", data_bytes=pdf_bytes)
                 except Exception:
-                    logging.exception("Failed to upload diagram %s for job %s", img_path, data.get("job_id"))
-            exports: Dict[str, Path] = {}
-            pdf_path = _export_pdf(markdown_path)
-            if pdf_path:
-                exports["pdf"] = pdf_path
-            docx_path = _export_docx(markdown_path)
-            if docx_path:
-                exports["docx"] = docx_path
-            for fmt, path in exports.items():
+                    logging.exception("Failed to upload PDF export for job %s", job_id)
+            docx_bytes = _export_docx(final_text, image_map, store, job_id)
+            if docx_bytes:
                 try:
-                    store.put_bytes(
-                        blob=f"jobs/{data['job_id']}/final.{fmt}",
-                        data_bytes=path.read_bytes(),
-                    )
+                    store.put_bytes(blob=f"jobs/{job_id}/final.docx", data_bytes=docx_bytes)
                 except Exception:
-                    logging.exception("Failed to upload %s export for job %s", fmt, data.get("job_id"))
+                    logging.exception("Failed to upload DOCX export for job %s", job_id)
         except Exception:
-            pass
+            logging.exception("Failed to finalize job %s", data.get("job_id"))
     _status({"job_id": data["job_id"], "stage": "FINALIZE_DONE", "ts": time.time()})
 SECTION_START_RE = re.compile(r"<!-- SECTION:(?P<id>[^:]+):START -->")
 
@@ -900,9 +925,14 @@ def _markdown_to_html(markdown: str) -> str:
     return md.render(markdown)
 
 
-def _export_pdf(markdown_path: Path) -> Optional[Path]:
+def _export_pdf(
+    markdown: str,
+    image_map: Dict[str, bytes],
+    store: BlobStore,
+    job_id: str,
+) -> Optional[bytes]:
     try:
-        html = _markdown_to_html(markdown_path.read_text(encoding="utf-8"))
+        html = _markdown_to_html(markdown)
         if not html:
             return None
         from weasyprint import HTML  # type: ignore
@@ -910,19 +940,31 @@ def _export_pdf(markdown_path: Path) -> Optional[Path]:
         logging.warning("WeasyPrint or markdown-it-py not available; skipping PDF export")
         return None
 
-    pdf_path = markdown_path.with_suffix(".pdf")
+    def _replace_src(match: re.Match[str]) -> str:
+        src = match.group(1)
+        data = _resolve_image_bytes(src, image_map, store, job_id)
+        if data is None:
+            return match.group(0)
+        encoded = base64.b64encode(data).decode("ascii")
+        return f'src="data:image/png;base64,{encoded}"'
+
+    html = re.sub(r'src="([^"]+)"', _replace_src, html)
     try:
-        HTML(string=html, base_url=str(markdown_path.parent)).write_pdf(str(pdf_path))
-        return pdf_path
+        return HTML(string=html).write_pdf()
     except Exception:
-        logging.exception("Failed to render PDF for %s", markdown_path)
+        logging.exception("Failed to render PDF for job %s", job_id)
         return None
 
 
 IMAGE_PATTERN = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
 
 
-def _export_docx(markdown_path: Path) -> Optional[Path]:
+def _export_docx(
+    markdown: str,
+    image_map: Dict[str, bytes],
+    store: BlobStore,
+    job_id: str,
+) -> Optional[bytes]:
     try:
         from docx import Document  # type: ignore
         from docx.shared import Inches  # type: ignore
@@ -930,27 +972,21 @@ def _export_docx(markdown_path: Path) -> Optional[Path]:
         logging.warning("python-docx not installed; skipping DOCX export")
         return None
 
-    try:
-        lines = markdown_path.read_text(encoding="utf-8").splitlines()
-    except Exception:
-        logging.exception("Failed to read markdown for DOCX export: %s", markdown_path)
-        return None
-
     doc = Document()
 
     def _add_image(image_src: str) -> None:
-        img_path = (markdown_path.parent / image_src).resolve()
-        if not img_path.exists():
-            logging.warning("Image %s not found for DOCX export", img_path)
+        data = _resolve_image_bytes(image_src, image_map, store, job_id)
+        if data is None:
+            logging.warning("Image %s not found for DOCX export", image_src)
             return
         try:
             paragraph = doc.add_paragraph()
             run = paragraph.add_run()
-            run.add_picture(str(img_path), width=Inches(5))
+            run.add_picture(io.BytesIO(data), width=Inches(5))
         except Exception:
-            logging.exception("Failed to embed image %s in DOCX", img_path)
+            logging.exception("Failed to embed image %s in DOCX", image_src)
 
-    for raw_line in lines:
+    for raw_line in markdown.splitlines():
         line = raw_line.rstrip()
         stripped = line.strip()
         if not stripped:
@@ -986,33 +1022,54 @@ def _export_docx(markdown_path: Path) -> Optional[Path]:
 
         doc.add_paragraph(stripped)
 
-    docx_path = markdown_path.with_suffix(".docx")
     try:
-        doc.save(str(docx_path))
-        return docx_path
+        buffer = io.BytesIO()
+        doc.save(buffer)
+        return buffer.getvalue()
     except Exception:
-        logging.exception("Failed to write DOCX to %s", docx_path)
+        logging.exception("Failed to write DOCX for job %s", job_id)
         return None
 
 
 MERMAID_BLOCK_RE = re.compile(r"```mermaid\s+([\s\S]*?)```", re.IGNORECASE)
 
 
-def _replace_mermaid_with_images(markdown: str, markdown_path: Path) -> Tuple[str, List[Path]]:
-    images: List[Path] = []
-    if "```mermaid" not in markdown:
-        return markdown, images
-    image_dir = markdown_path.parent / "images"
-    image_dir.mkdir(parents=True, exist_ok=True)
+def _resolve_image_bytes(
+    src: str,
+    image_map: Dict[str, bytes],
+    store: BlobStore,
+    job_id: str,
+) -> Optional[bytes]:
+    normalized = src.lstrip("./")
+    data = image_map.get(normalized)
+    if data is not None:
+        return data
+    if normalized.startswith("http://") or normalized.startswith("https://"):
+        return None
+    blob_path = normalized if normalized.startswith("jobs/") else f"jobs/{job_id}/{normalized}"
+    try:
+        return store.get_bytes(blob_path)
+    except Exception:
+        return None
 
-    def _render_diagram(code: str, index: int) -> Optional[Path]:
+
+def _replace_mermaid_with_images(
+    markdown: str,
+    job_id: str,
+    store: BlobStore,
+) -> Tuple[str, Dict[str, bytes]]:
+    if "```mermaid" not in markdown:
+        return markdown, {}
+
+    images: Dict[str, bytes] = {}
+
+    def _render_diagram(code: str) -> Optional[bytes]:
         if requests is None:
             logging.warning("requests not available; skipping mermaid rendering")
             return None
         code = code.strip()
         if not code:
             return None
-        target = image_dir / f"diagram_{index}.png"
         try:
             resp = requests.post(
                 "https://kroki.io/mermaid/png",
@@ -1020,21 +1077,26 @@ def _replace_mermaid_with_images(markdown: str, markdown_path: Path) -> Tuple[st
                 timeout=30,
             )
             resp.raise_for_status()
-            target.write_bytes(resp.content)
-            return target
+            return resp.content
         except Exception:
-            logging.exception("Failed to render mermaid diagram %s", index)
+            logging.exception("Failed to render mermaid diagram")
             return None
 
-    def _replace(match: re.Match) -> str:
+    def _replace(match: re.Match[str]) -> str:
         code = match.group(1)
+        rendered = _render_diagram(code)
+        if not rendered:
+            return match.group(0)
         idx = len(images) + 1
-        rendered = _render_diagram(code, idx)
-        if rendered:
-            images.append(rendered)
-            rel_path = Path("images") / rendered.name
-            return f"![Diagram {idx}]({rel_path.as_posix()})"
-        return match.group(0)
+        rel_path = f"images/diagram_{idx}.png"
+        blob_path = f"jobs/{job_id}/{rel_path}"
+        try:
+            store.put_bytes(blob=blob_path, data_bytes=rendered)
+            images[rel_path] = rendered
+        except Exception:
+            logging.exception("Failed to upload mermaid diagram %s for job %s", idx, job_id)
+            return match.group(0)
+        return f"![Diagram {idx}]({rel_path})"
 
     new_markdown = MERMAID_BLOCK_RE.sub(_replace, markdown)
     return new_markdown, images

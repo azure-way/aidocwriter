@@ -47,3 +47,6 @@ class BlobStore:
     def get_text(self, blob: str) -> str:
         data = self.container.download_blob(blob).readall()
         return data.decode("utf-8")
+
+    def get_bytes(self, blob: str) -> bytes:
+        return self.container.download_blob(blob).readall()
