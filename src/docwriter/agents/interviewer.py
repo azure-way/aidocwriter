@@ -112,7 +112,17 @@ class InterviewerAgent:
                 if isinstance(data, list) and data:
                     return self._normalize_questions(data)
         except Exception:
-            pass
+            self.llm.last_usage = {
+                "prompt_tokens": None,
+                "completion_tokens": None,
+                "total_tokens": None,
+            }
+            return self._normalize_questions(DEFAULT_QUESTIONS)
+        self.llm.last_usage = {
+            "prompt_tokens": None,
+            "completion_tokens": None,
+            "total_tokens": None,
+        }
         return self._normalize_questions(DEFAULT_QUESTIONS)
 
     def propose_followups(self, title: str, answers: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -138,7 +148,17 @@ class InterviewerAgent:
                 if isinstance(data, list):
                     return data
         except Exception:
-            pass
+            self.llm.last_usage = {
+                "prompt_tokens": None,
+                "completion_tokens": None,
+                "total_tokens": None,
+            }
+            return []
+        self.llm.last_usage = {
+            "prompt_tokens": None,
+            "completion_tokens": None,
+            "total_tokens": None,
+        }
         return []
 
     def _normalize_questions(self, raw: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

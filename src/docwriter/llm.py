@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import json
 from dataclasses import dataclass
-from typing import Iterator, Optional
+from typing import Iterator, Optional, Dict, Any
 
 try:  # Optional at import time to allow tests with FakeLLM without the SDK installed
     from openai import OpenAI, AzureOpenAI  # type: ignore
@@ -36,6 +36,11 @@ class LLMClient:
                 "openai package not installed. Install with `pip install openai` or use FakeLLM in tests."
             )
         self.use_responses = use_responses
+        self.last_usage: Dict[str, Optional[int]] = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
         client_kwargs: dict[str, object] = {}
         if base_url and "azure.com" in base_url.lower():
             if AzureOpenAI is None:
@@ -93,6 +98,37 @@ class LLMClient:
                 return "".join(pieces)
         return str(resp)
 
+    def _update_usage(self, resp: Any) -> None:
+        usage = getattr(resp, "usage", None)
+        prompt_tokens: Optional[int] = None
+        completion_tokens: Optional[int] = None
+        total_tokens: Optional[int] = None
+        if usage is not None:
+            if isinstance(usage, dict):
+                prompt_tokens = usage.get("prompt_tokens") or usage.get("input_tokens")
+                completion_tokens = usage.get("completion_tokens") or usage.get("output_tokens")
+                total_tokens = usage.get("total_tokens")
+            else:
+                prompt_tokens = getattr(usage, "prompt_tokens", None) or getattr(usage, "input_tokens", None)
+                completion_tokens = getattr(usage, "completion_tokens", None) or getattr(
+                    usage, "output_tokens", None
+                )
+                total_tokens = getattr(usage, "total_tokens", None)
+        if total_tokens is None and prompt_tokens is not None and completion_tokens is not None:
+            total_tokens = prompt_tokens + completion_tokens
+        if prompt_tokens is None and completion_tokens is None and total_tokens is None:
+            self.last_usage = {
+                "prompt_tokens": None,
+                "completion_tokens": None,
+                "total_tokens": None,
+            }
+        else:
+            self.last_usage = {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+            }
+
     def chat_stream(self, model: str, messages: list[LLMMessage]) -> Iterator[str]:
         inputs = [{"role": m.role, "content": m.content} for m in messages]
         temp = 0.2 if self._supports_sampling(model) else None
@@ -104,7 +140,8 @@ class LLMClient:
                 for event in s:
                     if event.type == "response.output_text.delta":
                         yield event.delta
-                _ = s.get_final_response()
+                final_resp = s.get_final_response()
+            self._update_usage(final_resp)
         else:
             completion_kwargs = {"model": model, "messages": inputs}
             if temp is not None:
@@ -116,6 +153,11 @@ class LLMClient:
                         yield delta
                 except Exception:
                     continue
+            self.last_usage = {
+                "prompt_tokens": None,
+                "completion_tokens": None,
+                "total_tokens": None,
+            }
 
     def chat(
         self,
@@ -132,6 +174,7 @@ class LLMClient:
             if response_format is not None and self._supports_response_format():
                 request_kwargs["response_format"] = response_format
             resp = self.client.responses.create(**request_kwargs)
+            self._update_usage(resp)
             if response_format is not None:
                 try:
                     first_output = resp.output[0]
@@ -145,6 +188,7 @@ class LLMClient:
             if temp is not None:
                 completion_kwargs["temperature"] = temp
             resp = self.client.chat.completions.create(**completion_kwargs)
+            self._update_usage(resp)
             try:
                 return str(resp.choices[0].message.content or "")
             except Exception:

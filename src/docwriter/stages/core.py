@@ -81,6 +81,20 @@ def _build_stage_message(
     return " | ".join(parts)
 
 
+def _usage_total(usage: Optional[Dict[str, Optional[int]]]) -> int:
+    if not usage:
+        return 0
+    total = usage.get("total_tokens")
+    if isinstance(total, int) and total >= 0:
+        return total
+    prompt = usage.get("prompt_tokens") or 0
+    completion = usage.get("completion_tokens") or 0
+    try:
+        return int(prompt or 0) + int(completion or 0)
+    except Exception:
+        return 0
+
+
 def _stage_completed_event(
     job_id: str,
     stage: str,
@@ -114,6 +128,7 @@ def _stage_completed_event(
 
 
 def process_plan_intake(data: Dict[str, Any], interviewer: InterviewerAgent | None = None) -> None:
+    settings = get_settings()
     interviewer = interviewer or InterviewerAgent()
     artifact_path = f"jobs/{data['job_id']}/intake/questions.json"
     with stage_timer(job_id=data["job_id"], stage="PLAN_INTAKE") as timing:
@@ -145,7 +160,9 @@ def process_plan_intake(data: Dict[str, Any], interviewer: InterviewerAgent | No
             )
         except Exception as exc:
             track_exception(exc, {"job_id": data["job_id"], "stage": "PLAN_INTAKE"})
-    question_tokens = _estimate_tokens(json.dumps(questions, ensure_ascii=False))
+    question_tokens = _usage_total(getattr(interviewer.llm, "last_usage", None))
+    if not question_tokens:
+        question_tokens = _estimate_tokens(json.dumps(questions, ensure_ascii=False))
     publish_status(
         StatusEvent(
             job_id=data["job_id"],
@@ -156,16 +173,17 @@ def process_plan_intake(data: Dict[str, Any], interviewer: InterviewerAgent | No
                 artifact_path,
                 timing.duration_s,
                 question_tokens,
-                None,
-                "action: upload answers.json and resume",
+                settings.planner_model,
+                "stage notes: upload answers.json and resume",
             ),
             artifact=artifact_path,
             extra={
                 "details": {
                     "duration_s": timing.duration_s,
                     "tokens": question_tokens,
+                    "model": settings.planner_model,
                     "artifact": artifact_path,
-                    "notes": "action: upload answers.json and resume",
+                    "notes": "upload answers.json and resume",
                 }
             },
         )
@@ -276,7 +294,9 @@ def process_plan(data: Dict[str, Any], planner: PlannerAgent | None = None) -> N
     publish_stage_event("WRITE", "QUEUED", payload)
     send_queue_message(settings.sb_queue_write, payload)
     artifact_path = f"jobs/{data['job_id']}/plan.json"
-    plan_tokens = _estimate_tokens(json.dumps(payload["plan"], ensure_ascii=False))
+    plan_tokens = _usage_total(getattr(planner.llm, "last_usage", None))
+    if not plan_tokens:
+        plan_tokens = _estimate_tokens(json.dumps(payload["plan"], ensure_ascii=False))
     publish_status(
         StatusEvent(
             job_id=data["job_id"],
@@ -311,6 +331,7 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
     if not isinstance(blob_path, str) or not blob_path:
         blob_path = BlobStore().allocate_document_blob(data["job_id"])
 
+    write_tokens_total = 0
     with stage_timer(job_id=data["job_id"], stage="WRITE") as timing:
         plan = data["plan"]
         outline = plan.get("outline", [])
@@ -327,6 +348,7 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
             document_text_parts.append(section_output)
             summary = summarizer.summarize_section("\n\n".join(document_text_parts))
             dependency_summaries[sid] = summary
+            write_tokens_total += _usage_total(getattr(writer.llm, "last_usage", None))
         document_text = "\n\n".join(document_text_parts)
     payload = {**data, "out": blob_path, "dependency_summaries": dependency_summaries}
     try:
@@ -337,14 +359,15 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
         track_exception(exc, {"job_id": data["job_id"], "stage": "WRITE"})
     publish_stage_event("REVIEW", "QUEUED", payload)
     send_queue_message(settings.sb_queue_review, payload)
-    write_tokens = _estimate_tokens(document_text)
+    if not write_tokens_total:
+        write_tokens_total = _estimate_tokens(document_text)
     publish_status(
         _stage_completed_event(
             data["job_id"],
             "WRITE",
             timing,
             artifact=f"jobs/{data['job_id']}/draft.md",
-            tokens=write_tokens,
+            tokens=write_tokens_total,
             model=settings.writer_model,
         )
     )
@@ -357,9 +380,12 @@ def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) 
         store = BlobStore()
         draft = store.get_text(blob=data["out"])
         review_json = reviewer.review(plan=data["plan"], draft_markdown=draft)
-        style = StyleReviewerAgent().review_style(plan=data["plan"], markdown=draft)
-        cohesion = CohesionReviewerAgent().review_cohesion(plan=data["plan"], markdown=draft)
-        summary = SummaryReviewerAgent().review_executive_summary(plan=data["plan"], markdown=draft)
+        style_agent = StyleReviewerAgent()
+        style = style_agent.review_style(plan=data["plan"], markdown=draft)
+        cohesion_agent = CohesionReviewerAgent()
+        cohesion = cohesion_agent.review_cohesion(plan=data["plan"], markdown=draft)
+        summary_agent = SummaryReviewerAgent()
+        summary = summary_agent.review_executive_summary(plan=data["plan"], markdown=draft)
         cycle_idx = int(data.get("cycles_completed", 0)) + 1
     payload = {**data, "review_json": review_json, "style_json": style, "cohesion_json": cohesion, "exec_summary_json": summary}
     try:
@@ -375,11 +401,16 @@ def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) 
         track_exception(exc, {"job_id": data["job_id"], "stage": "REVIEW"})
     publish_stage_event("VERIFY", "QUEUED", payload)
     send_queue_message(settings.sb_queue_verify, payload)
-    review_tokens = sum(
-        _estimate_tokens(text)
-        for text in (review_json, style, cohesion, summary)
-        if isinstance(text, str)
-    )
+    review_tokens = _usage_total(getattr(reviewer.llm, "last_usage", None))
+    review_tokens += _usage_total(getattr(style_agent.llm, "last_usage", None))
+    review_tokens += _usage_total(getattr(cohesion_agent.llm, "last_usage", None))
+    review_tokens += _usage_total(getattr(summary_agent.llm, "last_usage", None))
+    if not review_tokens:
+        review_tokens = sum(
+            _estimate_tokens(text)
+            for text in (review_json, style, cohesion, summary)
+            if isinstance(text, str)
+        )
     publish_status(
         _stage_completed_event(
             data["job_id"],
@@ -452,16 +483,31 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
         publish_stage_event("FINALIZE", "QUEUED", payload)
         send_queue_message(settings.sb_queue_finalize, payload)
     artifact_path = f"jobs/{data['job_id']}/cycle_{cycle_idx}/contradictions.json"
-    verify_tokens = _estimate_tokens(verification_json)
+    verify_tokens = _usage_total(getattr(verifier.llm, "last_usage", None))
+    if not verify_tokens:
+        verify_tokens = _estimate_tokens(verification_json)
+    notes_list: list[str] = []
+    if contradictions:
+        notes_list.append("stage notes: contradictions detected")
+    if style_guidance:
+        notes_list.append("stage notes: style revisions pending")
+    if cohesion_guidance:
+        notes_list.append("stage notes: cohesion guidance pending")
+    if placeholder_sections:
+        notes_list.append("stage notes: placeholders present")
+    notes_message = "; ".join(notes_list) if notes_list else None
     publish_status(
         StatusEvent(
             job_id=data["job_id"],
             stage="VERIFY_DONE",
             ts=time.time(),
-            message=(
-                f"Verify complete (cycle {cycle_idx}) | document: {artifact_path} | "
-                f"time: {_format_duration(timing.duration_s)} | tokens: {verify_tokens:,} | "
-                f"model: {settings.verifier_model}"
+            message=_build_stage_message(
+                "Verify",
+                artifact_path,
+                timing.duration_s,
+                verify_tokens,
+                settings.verifier_model,
+                notes_message,
             ),
             cycle=cycle_idx,
             has_contradictions=bool(contradictions),
@@ -484,6 +530,7 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
 def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> None:
     settings = get_settings()
     writer = writer or WriterAgent()
+    rewrite_tokens_total = 0
     with stage_timer(job_id=data["job_id"], stage="REWRITE", cycle=int(data.get("cycles_completed", 0)) + 1) as timing:
         plan = data["plan"]
         store = BlobStore()
@@ -537,6 +584,7 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
                 if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
                     end_idx += len(end_marker)
                     text = text[:start_idx] + new_text + text[end_idx:]
+                rewrite_tokens_total += _usage_total(getattr(writer.llm, "last_usage", None))
             store.put_text(blob=data["out"], text=text)
             try:
                 store.put_text(blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/rewrite.md", text=text)
@@ -550,14 +598,15 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
     }
     publish_stage_event("REVIEW", "QUEUED", payload)
     send_queue_message(settings.sb_queue_review, payload)
-    rewrite_tokens = _estimate_tokens(text)
+    if not rewrite_tokens_total:
+        rewrite_tokens_total = _estimate_tokens(text)
     publish_status(
         _stage_completed_event(
             data["job_id"],
             "REWRITE",
             timing,
             artifact=data.get("out"),
-            tokens=rewrite_tokens,
+            tokens=rewrite_tokens_total,
             model=settings.writer_model,
         )
     )
@@ -587,7 +636,7 @@ def process_finalize(data: Dict[str, Any]) -> None:
                     logging.exception("Failed to upload DOCX export for job %s", job_id)
         except Exception:
             logging.exception("Failed to finalize job %s", data.get("job_id"))
-    final_tokens = _estimate_tokens(final_text)
+    final_tokens = 0
     publish_status(
         _stage_completed_event(
             data["job_id"],
