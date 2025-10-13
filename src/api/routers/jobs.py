@@ -61,10 +61,17 @@ def job_status(job_id: str) -> StatusResponse:
     latest = status_store.latest(job_id)
     if not latest:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found in status cache")
+    details = latest.get("details")
+    if isinstance(details, str):
+        try:
+            details = json.loads(details)
+        except json.JSONDecodeError:
+            details = {"raw": details}
     return StatusResponse(
         job_id=job_id,
         stage=str(latest.get("stage", "UNKNOWN")),
         artifact=latest.get("artifact"),
         message=latest.get("message"),
         cycle=latest.get("cycle"),
+        details=details,
     )

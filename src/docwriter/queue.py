@@ -15,7 +15,7 @@ from .agents.verifier import VerifierAgent
 from .summary import Summarizer
 from .graph import build_dependency_graph
 from .storage import BlobStore
-from .telemetry import stage_timer, track_event, track_exception
+from .telemetry import track_event, track_exception
 from .agents.interviewer import InterviewerAgent
 from .agents.style_reviewer import StyleReviewerAgent
 from .agents.cohesion_reviewer import CohesionReviewerAgent

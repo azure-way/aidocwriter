@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from docwriter.agents.cohesion_reviewer import CohesionReviewerAgent
 from docwriter.agents.interviewer import InterviewerAgent
@@ -25,18 +25,104 @@ from docwriter.stage_utils import (
 )
 from docwriter.storage import BlobStore
 from docwriter.summary import Summarizer
-from docwriter.telemetry import stage_timer, track_event, track_exception
+from docwriter.telemetry import stage_timer, track_event, track_exception, StageTiming
+
+import tiktoken
+
+ENCODING_NAME = "cl100k_base"
+
+
+def _estimate_tokens(text: str) -> int:
+    if not text:
+        return 0
+    try:
+        encoding = tiktoken.get_encoding(ENCODING_NAME)
+    except Exception:
+        encoding = tiktoken.encoding_for_model("gpt-4o-mini")
+    try:
+        return len(encoding.encode(text))
+    except Exception:
+        return max(1, len(text) // 3)
+
+
+def _format_duration(duration_s: float | None) -> str:
+    if duration_s is None:
+        return "unknown duration"
+    total_seconds = int(duration_s)
+    minutes, seconds = divmod(total_seconds, 60)
+    if minutes and seconds:
+        return f"{minutes} min {seconds} sec"
+    if minutes:
+        return f"{minutes} min"
+    return f"{seconds} sec"
+
+
+def _pretty_stage(stage: str) -> str:
+    return stage.replace("_", " ").title()
+
+
+def _build_stage_message(
+    stage_label: str,
+    artifact: Optional[str],
+    duration_s: Optional[float],
+    tokens: Optional[int],
+    model: Optional[str],
+    notes: Optional[str] = None,
+) -> str:
+    parts = [
+        f"stage completed: {stage_label}",
+        f"stage document: {artifact or 'n/a'}",
+        f"stage time: {_format_duration(duration_s)}",
+        f"stage tokens: {f'{tokens:,}' if tokens is not None else 'n/a'}",
+        f"stage model: {model or 'n/a'}",
+    ]
+    if notes:
+        parts.append(notes)
+    return " | ".join(parts)
+
+
+def _stage_completed_event(
+    job_id: str,
+    stage: str,
+    timing: StageTiming,
+    *,
+    artifact: Optional[str] = None,
+    tokens: Optional[int] = None,
+    model: Optional[str] = None,
+    notes: Optional[str] = None,
+) -> StatusEvent:
+    stage_label = _pretty_stage(stage)
+    message = _build_stage_message(stage_label, artifact, timing.duration_s, tokens, model, notes)
+    details = {
+        "duration_s": timing.duration_s,
+        "tokens": tokens,
+        "model": model,
+        "artifact": artifact,
+        "notes": notes,
+    }
+    details = {k: v for k, v in details.items() if v is not None}
+    extra = {"details": details} if details else {}
+    return StatusEvent(
+        job_id=job_id,
+        stage=f"{stage}_DONE",
+        ts=time.time(),
+        message=message,
+        artifact=artifact,
+        cycle=timing.cycle,
+        extra=extra if extra else {},
+    )
 
 
 def process_plan_intake(data: Dict[str, Any], interviewer: InterviewerAgent | None = None) -> None:
     interviewer = interviewer or InterviewerAgent()
-    with stage_timer(job_id=data["job_id"], stage="PLAN_INTAKE"):
+    artifact_path = f"jobs/{data['job_id']}/intake/questions.json"
+    with stage_timer(job_id=data["job_id"], stage="PLAN_INTAKE") as timing:
         title = data["title"]
         questions = interviewer.propose_questions(title)
         try:
             store = BlobStore()
             store.put_text(
-                blob=f"jobs/{data['job_id']}/intake/questions.json", text=json.dumps(questions, indent=2)
+                blob=artifact_path, text=json.dumps(questions, indent=2)
             )
             context_snapshot = {
                 "job_id": data.get("job_id"),
@@ -59,20 +145,36 @@ def process_plan_intake(data: Dict[str, Any], interviewer: InterviewerAgent | No
             )
         except Exception as exc:
             track_exception(exc, {"job_id": data["job_id"], "stage": "PLAN_INTAKE"})
+    question_tokens = _estimate_tokens(json.dumps(questions, ensure_ascii=False))
     publish_status(
         StatusEvent(
             job_id=data["job_id"],
             stage="INTAKE_READY",
             ts=time.time(),
-            message="Upload answers.json to intake folder and call resume",
-            artifact=f"jobs/{data['job_id']}/intake/questions.json",
+            message=_build_stage_message(
+                "Plan Intake",
+                artifact_path,
+                timing.duration_s,
+                question_tokens,
+                None,
+                "action: upload answers.json and resume",
+            ),
+            artifact=artifact_path,
+            extra={
+                "details": {
+                    "duration_s": timing.duration_s,
+                    "tokens": question_tokens,
+                    "artifact": artifact_path,
+                    "notes": "action: upload answers.json and resume",
+                }
+            },
         )
     )
 
 
 def process_intake_resume(data: Dict[str, Any]) -> None:
     settings = get_settings()
-    with stage_timer(job_id=data["job_id"], stage="INTAKE_RESUME"):
+    with stage_timer(job_id=data["job_id"], stage="INTAKE_RESUME") as timing:
         publish_stage_event("PLAN", "QUEUED", data)
         send_queue_message(settings.sb_queue_plan, data)
         publish_status(
@@ -80,7 +182,21 @@ def process_intake_resume(data: Dict[str, Any]) -> None:
                 job_id=data["job_id"],
                 stage="INTAKE_RESUMED",
                 ts=time.time(),
-                message="Intake resumed",
+                message=_build_stage_message(
+                    "Intake Resume",
+                    None,
+                    timing.duration_s,
+                    0,
+                    None,
+                ),
+                extra={
+                    "details": {
+                        "duration_s": timing.duration_s,
+                        "tokens": 0,
+                        "model": None,
+                        "artifact": None,
+                    }
+                },
             )
         )
 
@@ -99,7 +215,7 @@ def process_plan(data: Dict[str, Any], planner: PlannerAgent | None = None) -> N
         "title=",
         data.get("title"),
     )
-    with stage_timer(job_id=data["job_id"], stage="PLAN"):
+    with stage_timer(job_id=data["job_id"], stage="PLAN") as timing:
         audience = data.get("audience")
         title = data.get("title")
         length_pages = 80
@@ -159,13 +275,29 @@ def process_plan(data: Dict[str, Any], planner: PlannerAgent | None = None) -> N
         track_exception(exc, {"job_id": data["job_id"], "stage": "PLAN"})
     publish_stage_event("WRITE", "QUEUED", payload)
     send_queue_message(settings.sb_queue_write, payload)
+    artifact_path = f"jobs/{data['job_id']}/plan.json"
+    plan_tokens = _estimate_tokens(json.dumps(payload["plan"], ensure_ascii=False))
     publish_status(
         StatusEvent(
             job_id=data["job_id"],
             stage="PLAN_DONE",
             ts=time.time(),
-            message="Plan complete",
-            artifact=f"jobs/{data['job_id']}/plan.json",
+            message=_build_stage_message(
+                "Plan",
+                artifact_path,
+                timing.duration_s,
+                plan_tokens,
+                settings.planner_model,
+            ),
+            artifact=artifact_path,
+            extra={
+                "details": {
+                    "duration_s": timing.duration_s,
+                    "tokens": plan_tokens,
+                    "model": settings.planner_model,
+                    "artifact": artifact_path,
+                }
+            },
         )
     )
     print("[worker-plan] Dispatched job", data.get("job_id"), "to writing queue")
@@ -179,7 +311,7 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
     if not isinstance(blob_path, str) or not blob_path:
         blob_path = BlobStore().allocate_document_blob(data["job_id"])
 
-    with stage_timer(job_id=data["job_id"], stage="WRITE"):
+    with stage_timer(job_id=data["job_id"], stage="WRITE") as timing:
         plan = data["plan"]
         outline = plan.get("outline", [])
         graph = build_dependency_graph(outline)
@@ -205,13 +337,15 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
         track_exception(exc, {"job_id": data["job_id"], "stage": "WRITE"})
     publish_stage_event("REVIEW", "QUEUED", payload)
     send_queue_message(settings.sb_queue_review, payload)
+    write_tokens = _estimate_tokens(document_text)
     publish_status(
-        StatusEvent(
-            job_id=data["job_id"],
-            stage="WRITE_DONE",
-            ts=time.time(),
-            message="Draft ready",
+        _stage_completed_event(
+            data["job_id"],
+            "WRITE",
+            timing,
             artifact=f"jobs/{data['job_id']}/draft.md",
+            tokens=write_tokens,
+            model=settings.writer_model,
         )
     )
 
@@ -219,7 +353,7 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
 def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) -> None:
     settings = get_settings()
     reviewer = reviewer or ReviewerAgent()
-    with stage_timer(job_id=data["job_id"], stage="REVIEW", cycle=int(data.get("cycles_completed", 0)) + 1):
+    with stage_timer(job_id=data["job_id"], stage="REVIEW", cycle=int(data.get("cycles_completed", 0)) + 1) as timing:
         store = BlobStore()
         draft = store.get_text(blob=data["out"])
         review_json = reviewer.review(plan=data["plan"], draft_markdown=draft)
@@ -241,13 +375,19 @@ def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) 
         track_exception(exc, {"job_id": data["job_id"], "stage": "REVIEW"})
     publish_stage_event("VERIFY", "QUEUED", payload)
     send_queue_message(settings.sb_queue_verify, payload)
+    review_tokens = sum(
+        _estimate_tokens(text)
+        for text in (review_json, style, cohesion, summary)
+        if isinstance(text, str)
+    )
     publish_status(
-        StatusEvent(
-            job_id=data["job_id"],
-            stage="REVIEW_DONE",
-            ts=time.time(),
-            message=f"Review complete (cycle {cycle_idx})",
-            cycle=cycle_idx,
+        _stage_completed_event(
+            data["job_id"],
+            "REVIEW",
+            timing,
+            artifact=f"jobs/{data['job_id']}/cycle_{cycle_idx}/review.json",
+            tokens=review_tokens,
+            model=settings.reviewer_model,
         )
     )
 
@@ -255,7 +395,7 @@ def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) 
 def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) -> None:
     settings = get_settings()
     verifier = verifier or VerifierAgent()
-    with stage_timer(job_id=data["job_id"], stage="VERIFY", cycle=int(data.get("cycles_completed", 0)) + 1):
+    with stage_timer(job_id=data["job_id"], stage="VERIFY", cycle=int(data.get("cycles_completed", 0)) + 1) as timing:
         store = BlobStore()
         draft = store.get_text(blob=data["out"])
         cycle_idx = int(data.get("cycles_completed", 0)) + 1
@@ -311,17 +451,32 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
     else:
         publish_stage_event("FINALIZE", "QUEUED", payload)
         send_queue_message(settings.sb_queue_finalize, payload)
+    artifact_path = f"jobs/{data['job_id']}/cycle_{cycle_idx}/contradictions.json"
+    verify_tokens = _estimate_tokens(verification_json)
     publish_status(
         StatusEvent(
             job_id=data["job_id"],
             stage="VERIFY_DONE",
             ts=time.time(),
-            message=f"Verify complete (cycle {cycle_idx})",
+            message=(
+                f"Verify complete (cycle {cycle_idx}) | document: {artifact_path} | "
+                f"time: {_format_duration(timing.duration_s)} | tokens: {verify_tokens:,} | "
+                f"model: {settings.verifier_model}"
+            ),
             cycle=cycle_idx,
             has_contradictions=bool(contradictions),
             style_issues=bool(style_guidance),
             cohesion_issues=bool(cohesion_guidance),
             placeholder_sections=bool(placeholder_sections),
+            artifact=artifact_path,
+            extra={
+                "details": {
+                    "duration_s": timing.duration_s,
+                    "tokens": verify_tokens,
+                    "model": settings.verifier_model,
+                    "artifact": artifact_path,
+                }
+            },
         )
     )
 
@@ -329,7 +484,7 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
 def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> None:
     settings = get_settings()
     writer = writer or WriterAgent()
-    with stage_timer(job_id=data["job_id"], stage="REWRITE", cycle=int(data.get("cycles_completed", 0)) + 1):
+    with stage_timer(job_id=data["job_id"], stage="REWRITE", cycle=int(data.get("cycles_completed", 0)) + 1) as timing:
         plan = data["plan"]
         store = BlobStore()
         text = store.get_text(blob=data["out"])
@@ -395,19 +550,22 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
     }
     publish_stage_event("REVIEW", "QUEUED", payload)
     send_queue_message(settings.sb_queue_review, payload)
+    rewrite_tokens = _estimate_tokens(text)
     publish_status(
-        StatusEvent(
-            job_id=data["job_id"],
-            stage="REWRITE_DONE",
-            ts=time.time(),
-            message=f"Rewrite complete (cycle {cycle_idx})",
-            cycle=cycle_idx,
+        _stage_completed_event(
+            data["job_id"],
+            "REWRITE",
+            timing,
+            artifact=data.get("out"),
+            tokens=rewrite_tokens,
+            model=settings.writer_model,
         )
     )
 
 
 def process_finalize(data: Dict[str, Any]) -> None:
-    with stage_timer(job_id=data["job_id"], stage="FINALIZE"):
+    final_text = ""
+    with stage_timer(job_id=data["job_id"], stage="FINALIZE") as timing:
         try:
             store = BlobStore()
             job_id = data["job_id"]
@@ -429,11 +587,14 @@ def process_finalize(data: Dict[str, Any]) -> None:
                     logging.exception("Failed to upload DOCX export for job %s", job_id)
         except Exception:
             logging.exception("Failed to finalize job %s", data.get("job_id"))
+    final_tokens = _estimate_tokens(final_text)
     publish_status(
-        StatusEvent(
-            job_id=data["job_id"],
-            stage="FINALIZE_DONE",
-            ts=time.time(),
-            message="Final document ready",
+        _stage_completed_event(
+            data["job_id"],
+            "FINALIZE",
+            timing,
+            artifact=f"jobs/{data['job_id']}/final.md",
+            tokens=final_tokens,
+            model=None,
         )
     )

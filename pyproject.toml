@@ -10,7 +10,6 @@ authors = [{ name = "DocWriter" }]
 requires-python = ">=3.10"
 dependencies = [
   "openai>=1.40.0",
-  "typer>=0.12.3",
   "pydantic>=2.7.0",
   "rich>=13.7.1",
   "tiktoken>=0.7.0",
@@ -36,9 +35,6 @@ dev = [
   "pytest-cov>=4.1",
   "ruff>=0.6.0",
 ]
-
-[project.scripts]
-docwriter = "docwriter.cli:app"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

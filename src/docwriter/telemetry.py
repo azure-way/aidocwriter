@@ -81,14 +81,32 @@ def track_exception(exc: BaseException, properties: dict[str, str] | None = None
             logging.exception("Failed to send Application Insights exception")
 
 
+@dataclass
+class StageTiming:
+    job_id: str
+    stage: str
+    cycle: int | None
+    start: float
+    duration_s: float | None = None
+
+    @property
+    def elapsed_seconds(self) -> float:
+        if self.duration_s is not None:
+            return self.duration_s
+        return max(0.0, time.perf_counter() - self.start)
+
+    def complete(self, duration: float) -> None:
+        self.duration_s = duration
+
+
 @contextmanager
-def stage_timer(job_id: str, stage: str, cycle: int | None = None):
+def stage_timer(job_id: str, stage: str, cycle: int | None = None) -> StageTiming:
     """Context manager to time a stage and upload metrics JSON to Blob."""
     settings = get_settings()
     init_tracer()
     tracer = trace.get_tracer("docwriter") if trace else None
     appinsights_client = get_telemetry_client()
-    start = time.perf_counter()
+    timing = StageTiming(job_id=job_id, stage=stage, cycle=cycle, start=time.perf_counter())
     span = None
     if tracer:
         span = tracer.start_span(name=f"stage:{stage}")
@@ -100,7 +118,7 @@ def stage_timer(job_id: str, stage: str, cycle: int | None = None):
         props_base["cycle"] = str(cycle)
     track_event("stage_started", props_base)
     try:
-        yield
+        yield timing
     except Exception as exc:
         if span:
             span.record_exception(exc)
@@ -108,7 +126,8 @@ def stage_timer(job_id: str, stage: str, cycle: int | None = None):
         track_event("stage_failed", props_base)
         raise
     finally:
-        duration_s = time.perf_counter() - start
+        duration_s = time.perf_counter() - timing.start
+        timing.complete(duration_s)
         if span:
             span.set_attribute("duration_s", duration_s)
             span.end()

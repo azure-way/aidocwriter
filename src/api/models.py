@@ -42,6 +42,7 @@ class StatusResponse(BaseModel):
     artifact: Optional[str] = None
     message: Optional[str] = None
     cycle: Optional[int] = None
+    details: Optional[Dict[str, Any]] = None
 
 
 class IntakeQuestionsRequest(BaseModel):
