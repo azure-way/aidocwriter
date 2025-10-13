@@ -45,6 +45,11 @@ class StatusResponse(BaseModel):
     details: Optional[Dict[str, Any]] = None
 
 
+class BlobDownloadResponse(BaseModel):
+    path: str
+    content_type: str
+
+
 class IntakeQuestionsRequest(BaseModel):
     title: str = Field(..., description="Document title to scope intake questions")
 
