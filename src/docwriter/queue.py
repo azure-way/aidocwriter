@@ -1,29 +1,11 @@
 from __future__ import annotations
 
-import base64
-import io
 import json
-import re
 import uuid
 from dataclasses import dataclass
 import logging
-import os
-from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, List, Mapping
-from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Dict, Optional, Mapping
 import time
-
-try:  # Optional dependency for diagram rendering
-    import requests  # type: ignore
-except Exception:  # pragma: no cover
-    requests = None  # type: ignore
-
-try:  # optional dependency until queue features are used
-    from azure.servicebus import AutoLockRenewer, ServiceBusClient, ServiceBusMessage  # type: ignore
-except Exception:  # pragma: no cover
-    ServiceBusClient = None  # type: ignore
-    ServiceBusMessage = None  # type: ignore
-    AutoLockRenewer = None  # type: ignore
 
 from .config import get_settings
 from .agents.planner import PlannerAgent
@@ -38,35 +20,10 @@ from .agents.interviewer import InterviewerAgent
 from .agents.style_reviewer import StyleReviewerAgent
 from .agents.cohesion_reviewer import CohesionReviewerAgent
 from .agents.summary_reviewer import SummaryReviewerAgent
-
-
-LOG_CONFIGURED = False
-_SB_CLIENT: ServiceBusClient | None = None  # type: ignore[assignment]
-_SB_CONNECTION_STR: str | None = None
-
-
-def _configure_logging(worker_name: str) -> None:
-    global LOG_CONFIGURED
-    if LOG_CONFIGURED:
-        return
-    log_level = os.getenv("DOCWRITER_LOG_LEVEL", "INFO").upper()
-    formatter = logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
-    handlers: list[logging.Handler] = []
-
-    log_dir = os.getenv("LOG_DIR")
-    if log_dir:
-        log_path = Path(log_dir)
-        log_path.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(log_path / f"{worker_name}.log")
-        file_handler.setFormatter(formatter)
-        handlers.append(file_handler)
-
-    stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(formatter)
-    handlers.append(stream_handler)
-
-    logging.basicConfig(level=log_level, handlers=handlers, force=True)
-    LOG_CONFIGURED = True
+from .messaging import send_queue_message, service_bus, publish_stage_event as messaging_publish_stage_event, publish_status as messaging_publish_status
+from .workers import configure_logging as worker_configure_logging, run_processor as worker_run_processor
+from .stages import core as stages_core
+from .models import StatusEvent
 
 
 @dataclass
@@ -80,86 +37,18 @@ class Job:
 
 def _sb_check():
     settings = get_settings()
-    if not settings.sb_connection_string:
-        raise RuntimeError("SERVICE_BUS_CONNECTION_STRING not set")
-    if ServiceBusClient is None or ServiceBusMessage is None:
-        raise RuntimeError("azure-servicebus not installed. Install with `pip install azure-servicebus`.\n")
+    service_bus.ensure_ready()
     return settings
 
 
-def _get_servicebus_client(settings) -> ServiceBusClient:
-    global _SB_CLIENT, _SB_CONNECTION_STR
-    if ServiceBusClient is None:  # pragma: no cover - handled in _sb_check
-        raise RuntimeError("azure-servicebus not installed")
-    conn_str = settings.sb_connection_string
-    if not isinstance(conn_str, str) or not conn_str.strip():
-        raise RuntimeError("SERVICE_BUS_CONNECTION_STRING not set or empty")
-    if _SB_CLIENT is None or _SB_CONNECTION_STR != conn_str:
-        _SB_CLIENT = ServiceBusClient.from_connection_string(conn_str)
-        _SB_CONNECTION_STR = conn_str
-    return _SB_CLIENT
-
-
 def _send(queue_name: str, payload: Dict[str, Any]) -> None:
-    settings = _sb_check()
-    try:
-        client = _get_servicebus_client(settings)
-        with client.get_queue_sender(queue_name) as sender:
-            sender.send_messages(ServiceBusMessage(json.dumps(payload)))
-    except Exception as exc:
-        track_exception(exc, {"queue": queue_name})
-        raise
-
-
-def _status_topics(settings) -> List[str]:
-    topics: List[str] = []
-    primary = settings.sb_topic_status
-    if primary:
-        topics.append(primary)
-    fallback_env = os.getenv("DOCWRITER_FALLBACK_STATUS_TOPIC")
-    if fallback_env and fallback_env not in topics:
-        topics.append(fallback_env)
-    default_topic = os.getenv("DOCWRITER_DEFAULT_STATUS_TOPIC", "aidocwriter-status")
-    if default_topic and default_topic not in topics:
-        topics.append(default_topic)
-    legacy_topic = "docwriter-status"
-    if legacy_topic not in topics:
-        topics.append(legacy_topic)
-    return topics
+    _sb_check()
+    send_queue_message(queue_name, payload)
 
 
 def _status(payload: Dict[str, Any]) -> None:
-    settings = _sb_check()
-    topics = _status_topics(settings)
-    sent = False
-    last_exc: Exception | None = None
-    for topic in topics:
-        try:
-            client = _get_servicebus_client(settings)
-            with client.get_topic_sender(topic) as sender:
-                sender.send_messages(ServiceBusMessage(json.dumps(payload)))
-            sent = True
-            break
-        except Exception as exc:
-            last_exc = exc
-            track_exception(exc, {"topic": topic})
-    if not sent:
-        if last_exc:
-            logging.error("Failed to publish status event to Service Bus: %s", last_exc)
-        return
-    props = {k: str(v) for k, v in payload.items() if isinstance(v, (str, int, float))}
-    if "job_id" in payload:
-        props["job_id"] = str(payload["job_id"])
-    track_event("job_status", props)
-
-CYCLIC_STAGES: set[str] = {"REVIEW", "VERIFY", "REWRITE"}
-
-
-def _current_cycle(data: Mapping[str, Any]) -> Optional[int]:
-    try:
-        return int(data.get("cycles_completed", 0)) + 1
-    except Exception:
-        return None
+    _sb_check()
+    messaging_publish_status(payload)
 
 
 def _status_stage_event(
@@ -169,17 +58,7 @@ def _status_stage_event(
     *,
     extra: Optional[Mapping[str, Any]] = None,
 ) -> None:
-    job_id = data.get("job_id")
-    if not job_id:
-        return
-    payload: Dict[str, Any] = {"job_id": job_id, "stage": f"{stage}_{event}", "ts": time.time()}
-    if stage in CYCLIC_STAGES:
-        cycle = _current_cycle(data)
-        if cycle is not None:
-            payload["cycle"] = cycle
-    if extra:
-        payload.update({k: v for k, v in extra.items() if v is not None})
-    _status(payload)
+    messaging_publish_stage_event(stage, event, data, extra=extra)
 
 
 def send_job(job: Job) -> str:
@@ -204,9 +83,15 @@ def send_job(job: Job) -> str:
         "PLAN_INTAKE",
         "QUEUED",
         payload,
-        extra={"queue": settings.sb_queue_plan_intake},
     )
-    _status({"job_id": job_id, "stage": "ENQUEUED", "ts": time.time()})
+    _status(
+        StatusEvent(
+            job_id=job_id,
+            stage="ENQUEUED",
+            ts=time.time(),
+            message="Job enqueued",
+        ).to_payload()
+    )
     track_event(
         "job_enqueued",
         {
@@ -266,94 +151,23 @@ def send_resume(job_id: str) -> None:
         "INTAKE_RESUME",
         "QUEUED",
         payload,
-        extra={"queue": settings.sb_queue_intake_resume},
     )
     track_event("job_resume_signal", {"job_id": job_id})
 
 
-def _run_processor(
-    queue_name: str,
-    handler,
-    max_workers: int = 1,
-    stage_name: Optional[str] = None,
-) -> None:
-    settings = _sb_check()
-    renew_seconds = getattr(settings, "sb_lock_renew_s", 0)
-    lock_renewer = None
-    if AutoLockRenewer is not None and renew_seconds and renew_seconds > 0:
-        lock_renewer = AutoLockRenewer(max_lock_renewal_duration=renew_seconds)
-    try:
-        with ServiceBusClient.from_connection_string(settings.sb_connection_string) as client:
-            with client.get_queue_receiver(queue_name, max_wait_time=30) as receiver:
-                with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                    while True:
-                        try:
-                            messages = receiver.receive_messages(max_message_count=10, max_wait_time=30)
-                        except Exception as exc:
-                            track_exception(exc, {"queue": queue_name, "operation": "receive_messages"})
-                            time.sleep(2)
-                            continue
-                        if not messages:
-                            continue
-                        for msg in messages:
-                            try:
-                                data = _decode_msg(msg)
-                            except Exception as exc:
-                                track_exception(exc, {"queue": queue_name, "operation": "decode", "message_id": str(getattr(msg, "message_id", ""))})
-                                receiver.abandon_message(msg)
-                                continue
-                            if stage_name:
-                                try:
-                                    _status_stage_event(
-                                        stage_name,
-                                        "START",
-                                        data,
-                                        extra={"queue": queue_name},
-                                    )
-                                except Exception:
-                                    logging.exception("Failed to emit stage start event for %s", stage_name)
-                            if lock_renewer is not None:
-                                try:
-                                    lock_renewer.register(
-                                        receiver,
-                                        msg,
-                                        max_lock_renewal_duration=renew_seconds,
-                                    )
-                                except Exception as renew_exc:
-                                    logging.exception(
-                                        "Failed to register auto lock renewal for message %s: %s",
-                                        msg.message_id,
-                                        renew_exc,
-                                    )
-                                    track_exception(renew_exc, {"queue": queue_name, "operation": "lock_renew", "message_id": str(getattr(msg, "message_id", ""))})
-                            fut = pool.submit(handler, msg, data)
-                            try:
-                                fut.result()
-                                receiver.complete_message(msg)
-                            except Exception as ex:
-                                logging.exception(
-                                    f"Message processing failed, abandoning message {msg.message_id}: {ex}"
-                                )
-                                track_exception(ex, {"queue": queue_name, "operation": "handler", "message_id": str(getattr(msg, "message_id", ""))})
-                                receiver.abandon_message(msg)
-    finally:
-        if lock_renewer is not None:
-            lock_renewer.close()
-
-
 def worker_plan() -> None:
-    _configure_logging("worker-plan")
+    worker_configure_logging("worker-plan")
     settings = _sb_check()
     planner = PlannerAgent()
 
     def handle(_msg, data: Dict[str, Any]):
         process_plan(data, planner)
 
-    _run_processor(settings.sb_queue_plan, handle, stage_name="PLAN")
+    worker_run_processor(settings.sb_queue_plan, handle, stage_name="PLAN")
 
 
 def worker_write() -> None:
-    _configure_logging("worker-write")
+    worker_configure_logging("worker-write")
     settings = _sb_check()
     writer = WriterAgent()
     summarizer = Summarizer()
@@ -361,769 +175,80 @@ def worker_write() -> None:
     def handle(_msg, data: Dict[str, Any]):
         process_write(data, writer, summarizer)
 
-    _run_processor(settings.sb_queue_write, handle, stage_name="WRITE")
+    worker_run_processor(settings.sb_queue_write, handle, stage_name="WRITE")
 
 
 def worker_review() -> None:
-    _configure_logging("worker-review")
+    worker_configure_logging("worker-review")
     settings = _sb_check()
     reviewer = ReviewerAgent()
 
     def handle(_msg, data: Dict[str, Any]):
         process_review(data, reviewer)
 
-    _run_processor(settings.sb_queue_review, handle, stage_name="REVIEW")
+    worker_run_processor(settings.sb_queue_review, handle, stage_name="REVIEW")
 
 
 def worker_verify() -> None:
-    _configure_logging("worker-verify")
+    worker_configure_logging("worker-verify")
     settings = _sb_check()
     verifier = VerifierAgent()
 
     def handle(_msg, data: Dict[str, Any]):
         process_verify(data, verifier)
 
-    _run_processor(settings.sb_queue_verify, handle, stage_name="VERIFY")
+    worker_run_processor(settings.sb_queue_verify, handle, stage_name="VERIFY")
 
 
 def worker_rewrite() -> None:
-    _configure_logging("worker-rewrite")
+    worker_configure_logging("worker-rewrite")
     settings = _sb_check()
     writer = WriterAgent()
 
     def handle(_msg, data: Dict[str, Any]):
         process_rewrite(data, writer)
 
-    _run_processor(settings.sb_queue_rewrite, handle, stage_name="REWRITE")
+    worker_run_processor(settings.sb_queue_rewrite, handle, stage_name="REWRITE")
 
 
 def worker_finalize() -> None:
-    _configure_logging("worker-finalize")
+    worker_configure_logging("worker-finalize")
     settings = _sb_check()
 
     def handle(_msg, data: Dict[str, Any]):
         process_finalize(data)
 
-    _run_processor(settings.sb_queue_finalize, handle, stage_name="FINALIZE")
-
-
-def _decode_msg(msg) -> Dict[str, Any]:
-    try:
-        return json.loads(str(msg))
-    except Exception:
-        return json.loads("".join([b.decode("utf-8") for b in msg.body]))
+    worker_run_processor(settings.sb_queue_finalize, handle, stage_name="FINALIZE")
 
 
 # Exposed per-stage processors for E2E tests and direct invocation
 def process_plan_intake(data: Dict[str, Any], interviewer: InterviewerAgent | None = None) -> None:
-    interviewer = interviewer or InterviewerAgent()
-    with stage_timer(job_id=data["job_id"], stage="PLAN_INTAKE"):
-        title = data["title"]
-        questions = interviewer.propose_questions(title)
-        try:
-            store = BlobStore()
-            store.put_text(
-                blob=f"jobs/{data['job_id']}/intake/questions.json", text=json.dumps(questions, indent=2)
-            )
-            context_snapshot = {
-                "job_id": data.get("job_id"),
-                "title": data.get("title"),
-                "audience": data.get("audience"),
-                "out": data.get("out"),
-                "cycles_remaining": data.get("cycles_remaining"),
-                "cycles_completed": data.get("cycles_completed"),
-            }
-            store.put_text(
-                blob=f"jobs/{data['job_id']}/intake/context.json",
-                text=json.dumps(context_snapshot, indent=2),
-            )
-            sample_answers = {
-                str(item.get("id")): item.get("sample", "") for item in questions if isinstance(item, dict)
-            }
-            store.put_text(
-                blob=f"jobs/{data['job_id']}/intake/sample_answers.json",
-                text=json.dumps(sample_answers, indent=2),
-            )
-        except Exception as exc:
-            track_exception(exc, {"job_id": data["job_id"], "stage": "PLAN_INTAKE"})
-    _status(
-        {
-            "job_id": data["job_id"],
-            "stage": "INTAKE_READY",
-            "artifact": f"jobs/{data['job_id']}/intake/questions.json",
-            "message": "Upload answers.json to intake folder and call resume",
-            "ts": time.time(),
-        }
-    )
-    # Do not advance the pipeline until answers are provided via resume.
+    stages_core.process_plan_intake(data, interviewer)
 
 
 def process_intake_resume(data: Dict[str, Any]) -> None:
-    settings = get_settings()
-    with stage_timer(job_id=data["job_id"], stage="INTAKE_RESUME"):
-        _status_stage_event(
-            "PLAN",
-            "QUEUED",
-            data,
-            extra={"queue": settings.sb_queue_plan},
-        )
-        _send(settings.sb_queue_plan, data)
-        _status({"job_id": data["job_id"], "stage": "INTAKE_RESUMED", "ts": time.time()})
+    stages_core.process_intake_resume(data)
 
 
 def process_plan(data: Dict[str, Any], planner: PlannerAgent | None = None) -> None:
-    settings = get_settings()
-    planner = planner or PlannerAgent()
-    store: BlobStore | None = None
-    try:
-        store = BlobStore()
-    except Exception:
-        store = None
-    print(
-        "[worker-plan] Processing job",
-        data.get("job_id"),
-        "title=",
-        data.get("title"),
-    )
-    with stage_timer(job_id=data["job_id"], stage="PLAN"):
-        audience = data.get("audience")
-        title = data.get("title")
-        length_pages = 80
-        
-        answers: Dict[str, Any] = {}
-        if store:
-            try:
-                plan_text = store.get_text(blob=f"jobs/{data['job_id']}/plan.json")
-                existing_plan = json.loads(plan_text)
-                title = existing_plan.get("title", title)
-                audience = existing_plan.get("audience", audience)
-                if existing_plan.get("length_pages") is not None:
-                    length_pages = int(existing_plan.get("length_pages"))
-            except Exception:
-                pass
-
-            try:
-                answers_text = store.get_text(blob=f"jobs/{data['job_id']}/intake/answers.json")
-                answers = json.loads(answers_text)
-                audience = answers.get("audience", audience)
-                title = answers.get("title", title)
-                length_pages = int(answers.get("length_pages", length_pages))
-            except Exception:
-                pass
-
-        plan = planner.plan(title or "", audience=audience or "", length_pages=length_pages)
-        try:
-            plan.global_style.update({
-                "tone": answers.get("tone") or plan.global_style.get("tone"),
-                "pov": answers.get("pov") or plan.global_style.get("pov"),
-                "structure": answers.get("structure") or plan.global_style.get("structure"),
-                "constraints": answers.get("constraints") or plan.global_style.get("constraints"),
-            })
-        except Exception:
-            pass
-    payload = {
-        **data,
-        "plan": {
-            "title": plan.title,
-            "audience": plan.audience,
-            "length_pages": max(60, plan.length_pages or 80),
-            "outline": plan.outline,
-            "glossary": plan.glossary,
-            "global_style": plan.global_style,
-            "diagram_specs": plan.diagram_specs,
-        },
-        "dependency_summaries": {},
-        "intake_answers": answers,
-    }
-    try:
-        target_store = store or BlobStore()
-        target_store.put_text(
-            blob=f"jobs/{data['job_id']}/plan.json",
-            text=json.dumps(payload["plan"], indent=2),
-        )
-    except Exception as exc:
-        track_exception(exc, {"job_id": data["job_id"], "stage": "PLAN"})
-    _status_stage_event(
-        "WRITE",
-        "QUEUED",
-        payload,
-        extra={"queue": settings.sb_queue_write},
-    )
-    _send(settings.sb_queue_write, payload)
-    _status({"job_id": data["job_id"], "stage": "PLAN_DONE", "artifact": f"jobs/{data['job_id']}/plan.json", "ts": time.time()})
-    print("[worker-plan] Dispatched job", data.get("job_id"), "to writing queue")
+    stages_core.process_plan(data, planner)
 
 
 def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summarizer: Summarizer | None = None) -> None:
-    settings = get_settings()
-    writer = writer or WriterAgent()
-    summarizer = summarizer or Summarizer()
-    blob_path = data.get("out")
-    if not isinstance(blob_path, str) or not blob_path:
-        blob_path = BlobStore().allocate_document_blob(data["job_id"])
-
-    with stage_timer(job_id=data["job_id"], stage="WRITE"):
-        plan = data["plan"]
-        outline = plan.get("outline", [])
-        graph = build_dependency_graph(outline)
-        order = graph.topological_order() if outline else []
-        id_to_section = {str(s.get("id")): s for s in outline}
-        dependency_summaries = data.get("dependency_summaries", {})
-        document_text_parts: list[str] = []
-        for sid in order:
-            section = id_to_section[sid]
-            deps = section.get("dependencies", []) or []
-            dep_context = "\n".join([dependency_summaries.get(str(d), "") for d in deps if dependency_summaries.get(str(d))])
-            section_output = "".join(list(writer.write_section(plan=plan, section=section, dependency_context=dep_context)))
-            document_text_parts.append(section_output)
-            summary = summarizer.summarize_section("\n\n".join(document_text_parts))
-            dependency_summaries[sid] = summary
-        document_text = "\n\n".join(document_text_parts)
-    payload = {**data, "out": blob_path, "dependency_summaries": dependency_summaries}
-    try:
-        store = BlobStore()
-        store.put_text(blob=blob_path, text=document_text)
-        store.put_text(blob=f"jobs/{data['job_id']}/draft.md", text=document_text)
-    except Exception as exc:
-        track_exception(exc, {"job_id": data["job_id"], "stage": "WRITE"})
-    _status_stage_event(
-        "REVIEW",
-        "QUEUED",
-        payload,
-        extra={"queue": settings.sb_queue_review},
-    )
-    _send(settings.sb_queue_review, payload)
-    _status({"job_id": data["job_id"], "stage": "WRITE_DONE", "artifact": f"jobs/{data['job_id']}/draft.md", "ts": time.time()})
+    stages_core.process_write(data, writer, summarizer)
 
 
 def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) -> None:
-    settings = get_settings()
-    reviewer = reviewer or ReviewerAgent()
-    with stage_timer(job_id=data["job_id"], stage="REVIEW", cycle=int(data.get("cycles_completed", 0)) + 1):
-        store = BlobStore()
-        draft = store.get_text(blob=data["out"])
-        review_json = reviewer.review(plan=data["plan"], draft_markdown=draft)
-        style = StyleReviewerAgent().review_style(plan=data["plan"], markdown=draft)
-        cohesion = CohesionReviewerAgent().review_cohesion(plan=data["plan"], markdown=draft)
-        summary = SummaryReviewerAgent().review_executive_summary(plan=data["plan"], markdown=draft)
-        cycle_idx = int(data.get("cycles_completed", 0)) + 1
-    payload = {**data, "review_json": review_json, "style_json": style, "cohesion_json": cohesion, "exec_summary_json": summary}
-    try:
-        store = BlobStore()
-        store.put_text(
-            blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/review.json",
-            text=review_json,
-        )
-        store.put_text(blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/style.json", text=style)
-        store.put_text(blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/cohesion.json", text=cohesion)
-        store.put_text(blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/executive_summary.json", text=summary)
-    except Exception as exc:
-        track_exception(exc, {"job_id": data["job_id"], "stage": "REVIEW"})
-    _status_stage_event(
-        "VERIFY",
-        "QUEUED",
-        payload,
-        extra={"queue": settings.sb_queue_verify},
-    )
-    _send(settings.sb_queue_verify, payload)
-    _status({"job_id": data["job_id"], "stage": "REVIEW_DONE", "ts": time.time(), "cycle": cycle_idx})
+    stages_core.process_review(data, reviewer)
 
 
 def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) -> None:
-    settings = get_settings()
-    verifier = verifier or VerifierAgent()
-    with stage_timer(job_id=data["job_id"], stage="VERIFY", cycle=int(data.get("cycles_completed", 0)) + 1):
-        store = BlobStore()
-        draft = store.get_text(blob=data["out"])
-        cycle_idx = int(data.get("cycles_completed", 0)) + 1
-        try:
-            review_data = json.loads(data.get("review_json", "{}"))
-            revised = review_data.get("revised_markdown")
-            if isinstance(revised, str) and revised.strip():
-                merged = _merge_revised_markdown(draft, revised)
-                if merged != draft:
-                    draft = merged
-                    try:
-                        store.put_text(blob=data["out"], text=merged)
-                        store.put_text(
-                            blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/revision.md",
-                            text=merged,
-                        )
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-        placeholder_sections = _find_placeholder_sections(draft)
-        verification_json = verifier.verify(
-            dependency_summaries=data.get("dependency_summaries", {}), final_markdown=draft
-        )
-    payload = {**data, "verification_json": verification_json}
-    try:
-        store = BlobStore()
-        store.put_text(
-            blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/contradictions.json",
-            text=verification_json,
-        )
-    except Exception as exc:
-        track_exception(exc, {"job_id": data["job_id"], "stage": "VERIFY"})
-    try:
-        verification = json.loads(verification_json)
-        contradictions = verification.get("contradictions", [])
-    except Exception:
-        contradictions = []
-
-    style_guidance, style_sections = _parse_review_guidance(data.get("style_json"))
-    cohesion_guidance, cohesion_sections = _parse_review_guidance(data.get("cohesion_json"))
-    needs_rewrite = (
-        bool(contradictions)
-        or bool(style_guidance)
-        or bool(cohesion_guidance)
-        or bool(placeholder_sections)
-    )
-
-    if needs_rewrite and int(payload.get("cycles_remaining", 0)) > 0:
-        payload["placeholder_sections"] = sorted(placeholder_sections)
-        _status_stage_event(
-            "REWRITE",
-            "QUEUED",
-            payload,
-            extra={"queue": settings.sb_queue_rewrite},
-        )
-        _send(settings.sb_queue_rewrite, payload)
-    else:
-        _status_stage_event(
-            "FINALIZE",
-            "QUEUED",
-            payload,
-            extra={"queue": settings.sb_queue_finalize},
-        )
-        _send(settings.sb_queue_finalize, payload)
-    _status(
-        {
-            "job_id": data["job_id"],
-            "stage": "VERIFY_DONE",
-            "has_contradictions": bool(contradictions),
-            "style_issues": bool(style_guidance),
-            "cohesion_issues": bool(cohesion_guidance),
-            "placeholder_sections": bool(placeholder_sections),
-            "cycle": cycle_idx,
-            "ts": time.time(),
-        }
-    )
+    stages_core.process_verify(data, verifier)
 
 
 def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> None:
-    settings = get_settings()
-    writer = writer or WriterAgent()
-    with stage_timer(job_id=data["job_id"], stage="REWRITE", cycle=int(data.get("cycles_completed", 0)) + 1):
-        plan = data["plan"]
-        store = BlobStore()
-        text = store.get_text(blob=data["out"])
-        cycle_idx = int(data.get("cycles_completed", 0)) + 1
-        try:
-            verification = json.loads(data.get("verification_json", "{}"))
-        except Exception:
-            verification = {"contradictions": []}
-        contradictions = verification.get("contradictions", [])
-        id_to_section = {str(s.get("id")): s for s in plan.get("outline", [])}
-        dependency_summaries = data.get("dependency_summaries", {})
-
-        style_guidance, style_sections = _parse_review_guidance(data.get("style_json"))
-        cohesion_guidance, cohesion_sections = _parse_review_guidance(data.get("cohesion_json"))
-        combined_guidance = "\n".join(filter(None, [style_guidance, cohesion_guidance]))
-
-        affected = {str(c.get("section_id")) for c in contradictions if c.get("section_id")}
-        affected.update(style_sections)
-        affected.update(cohesion_sections)
-
-        if not affected and combined_guidance:
-            affected = set(id_to_section.keys())
-
-        placeholder_sections = {str(s) for s in data.get("placeholder_sections", [])}
-        affected.update(placeholder_sections)
-
-        if affected:
-            for sid in affected:
-                section = id_to_section.get(sid)
-                if not section:
-                    continue
-                deps = section.get("dependencies", []) or []
-                dep_context = "\n".join(
-                    [dependency_summaries.get(str(d), "") for d in deps if dependency_summaries.get(str(d))]
-                )
-                new_text = "".join(
-                    list(
-                        writer.write_section(
-                            plan=plan,
-                            section=section,
-                            dependency_context=dep_context,
-                            extra_guidance=combined_guidance,
-                        )
-                    )
-                )
-                start_marker = f"<!-- SECTION:{sid}:START -->"
-                end_marker = f"<!-- SECTION:{sid}:END -->"
-                start_idx = text.find(start_marker)
-                end_idx = text.find(end_marker)
-                if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-                    end_idx += len(end_marker)
-                    text = text[:start_idx] + new_text + text[end_idx:]
-            store.put_text(blob=data["out"], text=text)
-            try:
-                store.put_text(blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/rewrite.md", text=text)
-            except Exception:
-                pass
-    payload = {
-        **data,
-        "cycles_remaining": max(0, int(data.get("cycles_remaining", 0)) - 1),
-        "cycles_completed": int(data.get("cycles_completed", 0)) + 1,
-        "placeholder_sections": [],
-    }
-    _status_stage_event(
-        "REVIEW",
-        "QUEUED",
-        payload,
-        extra={"queue": settings.sb_queue_review},
-    )
-    _send(settings.sb_queue_review, payload)
-    _status({"job_id": data["job_id"], "stage": "REWRITE_DONE", "cycle": cycle_idx, "ts": time.time()})
+    stages_core.process_rewrite(data, writer)
 
 
 def process_finalize(data: Dict[str, Any]) -> None:
-    with stage_timer(job_id=data["job_id"], stage="FINALIZE"):
-        try:
-            store = BlobStore()
-            job_id = data["job_id"]
-            target_blob = data["out"]
-            final_text = store.get_text(blob=target_blob)
-            final_text, image_map = _replace_mermaid_with_images(final_text, job_id, store)
-            # store.put_text(blob=target_blob, text=final_text)
-            store.put_text(blob=f"jobs/{job_id}/final.md", text=final_text)
-            pdf_bytes = _export_pdf(final_text, image_map, store, job_id)
-            if pdf_bytes:
-                try:
-                    store.put_bytes(blob=f"jobs/{job_id}/final.pdf", data_bytes=pdf_bytes)
-                except Exception:
-                    logging.exception("Failed to upload PDF export for job %s", job_id)
-            docx_bytes = _export_docx(final_text, image_map, store, job_id)
-            if docx_bytes:
-                try:
-                    store.put_bytes(blob=f"jobs/{job_id}/final.docx", data_bytes=docx_bytes)
-                except Exception:
-                    logging.exception("Failed to upload DOCX export for job %s", job_id)
-        except Exception:
-            logging.exception("Failed to finalize job %s", data.get("job_id"))
-    _status({"job_id": data["job_id"], "stage": "FINALIZE_DONE", "ts": time.time()})
-SECTION_START_RE = re.compile(r"<!-- SECTION:(?P<id>[^:]+):START -->")
-
-
-def _extract_sections(text: str) -> Dict[str, str]:
-    sections: Dict[str, str] = {}
-    for match in SECTION_START_RE.finditer(text):
-        sid = match.group("id")
-        start_idx = match.start()
-        end_marker = f"<!-- SECTION:{sid}:END -->"
-        end_idx = text.find(end_marker, match.end())
-        if end_idx == -1:
-            continue
-        end_idx += len(end_marker)
-        sections[sid] = text[start_idx:end_idx]
-    return sections
-
-
-def _merge_revised_markdown(original: str, revised: str) -> str:
-    if not revised.strip():
-        return original
-    revised_sections = _extract_sections(revised)
-    if not revised_sections:
-        # Assume full-document replacement
-        return revised
-    original_sections = _extract_sections(original)
-    if not original_sections:
-        return revised
-    updated = original
-    for sid, section_text in revised_sections.items():
-        original_section = original_sections.get(sid)
-        if not original_section:
-            continue
-        inner = section_text.replace(f"<!-- SECTION:{sid}:START -->", "").replace(
-            f"<!-- SECTION:{sid}:END -->", ""
-        ).strip()
-        if not inner or "content unchanged" in inner.lower():
-            continue
-        updated = updated.replace(original_section, section_text)
-    return updated
-
-
-def _parse_review_guidance(raw: Any) -> Tuple[str, set[str]]:
-    if not isinstance(raw, str):
-        return "", set()
-    raw = raw.strip()
-    if not raw:
-        return "", set()
-    sections: set[str] = set()
-    try:
-        parsed = json.loads(raw)
-    except Exception:
-        return raw, sections
-    lines: list[str] = []
-
-    def _handle_item(label: str, value: Any) -> None:
-        if isinstance(value, dict):
-            section_id = value.get("section_id") or value.get("section") or value.get("id")
-            if section_id:
-                sections.add(str(section_id))
-            description = value.get("description") or value.get("issue") or value.get("summary")
-            if not description:
-                description = json.dumps(value, ensure_ascii=False)
-            lines.append(f"{label}: {description}")
-        else:
-            lines.append(f"{label}: {value}")
-
-    if isinstance(parsed, dict):
-        for key, val in parsed.items():
-            if isinstance(val, list):
-                for item in val:
-                    _handle_item(key, item)
-            else:
-                _handle_item(key, val)
-    elif isinstance(parsed, list):
-        for item in parsed:
-            _handle_item("item", item)
-    else:
-        lines.append(str(parsed))
-
-    guidance_text = "\n".join(line for line in lines if line).strip()
-    if not guidance_text:
-        guidance_text = json.dumps(parsed, ensure_ascii=False)
-    return guidance_text, sections
-
-
-def _find_placeholder_sections(markdown: str) -> set[str]:
-    placeholders: set[str] = set()
-    sections = _extract_sections(markdown)
-    for sid, section_text in sections.items():
-        inner = section_text.replace(f"<!-- SECTION:{sid}:START -->", "").replace(
-            f"<!-- SECTION:{sid}:END -->", ""
-        ).strip()
-        inner_lower = inner.lower()
-        if "content unchanged" in inner_lower or "placeholder" in inner_lower:
-            placeholders.add(sid)
-    return placeholders
-
-
-def _markdown_to_html(markdown: str) -> str:
-    try:
-        from markdown_it import MarkdownIt
-    except Exception:
-        logging.warning("markdown-it-py not installed; skipping HTML conversion")
-        return ""
-
-    md = MarkdownIt("commonmark", {"html": True, "linkify": True})
-    md.enable("table")
-    md.enable("strikethrough")
-    return md.render(markdown)
-
-
-def _export_pdf(
-    markdown: str,
-    image_map: Dict[str, bytes],
-    store: BlobStore,
-    job_id: str,
-) -> Optional[bytes]:
-    try:
-        html = _markdown_to_html(markdown)
-        if not html:
-            return None
-        from weasyprint import HTML  # type: ignore
-    except Exception:
-        logging.warning("WeasyPrint or markdown-it-py not available; skipping PDF export")
-        return None
-
-    def _replace_src(match: re.Match[str]) -> str:
-        src = match.group(1)
-        data = _resolve_image_bytes(src, image_map, store, job_id)
-        if data is None:
-            return match.group(0)
-        encoded = base64.b64encode(data).decode("ascii")
-        return f'src="data:image/png;base64,{encoded}"'
-
-    html = re.sub(r'src="([^"]+)"', _replace_src, html)
-    try:
-        return HTML(string=html).write_pdf()
-    except Exception:
-        logging.exception("Failed to render PDF for job %s", job_id)
-        return None
-
-
-IMAGE_PATTERN = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
-
-
-def _export_docx(
-    markdown: str,
-    image_map: Dict[str, bytes],
-    store: BlobStore,
-    job_id: str,
-) -> Optional[bytes]:
-    try:
-        from docx import Document  # type: ignore
-        from docx.shared import Inches  # type: ignore
-    except Exception:
-        logging.warning("python-docx not installed; skipping DOCX export")
-        return None
-
-    doc = Document()
-
-    def _add_image(image_src: str) -> None:
-        data = _resolve_image_bytes(image_src, image_map, store, job_id)
-        if data is None:
-            logging.warning("Image %s not found for DOCX export", image_src)
-            return
-        try:
-            paragraph = doc.add_paragraph()
-            run = paragraph.add_run()
-            run.add_picture(io.BytesIO(data), width=Inches(5))
-        except Exception:
-            logging.exception("Failed to embed image %s in DOCX", image_src)
-
-    for raw_line in markdown.splitlines():
-        line = raw_line.rstrip()
-        stripped = line.strip()
-        if not stripped:
-            doc.add_paragraph("")
-            continue
-
-        image_match = IMAGE_PATTERN.search(stripped)
-        if image_match:
-            before = stripped[: image_match.start()].strip()
-            if before:
-                doc.add_paragraph(before)
-            _add_image(image_match.group(1))
-            after = stripped[image_match.end() :].strip()
-            if after:
-                doc.add_paragraph(after)
-            continue
-
-        if stripped.startswith("#"):
-            level = 0
-            for ch in stripped:
-                if ch == "#":
-                    level += 1
-                else:
-                    break
-            text = stripped[level:].strip()
-            level = max(1, min(level, 6))
-            doc.add_heading(text or " ", level=level)
-            continue
-
-        if stripped.startswith(('- ', '* ')):
-            doc.add_paragraph(stripped[2:].strip(), style="List Bullet")
-            continue
-
-        doc.add_paragraph(stripped)
-
-    try:
-        buffer = io.BytesIO()
-        doc.save(buffer)
-        return buffer.getvalue()
-    except Exception:
-        logging.exception("Failed to write DOCX for job %s", job_id)
-        return None
-
-
-MERMAID_BLOCK_RE = re.compile(r"```mermaid\s+([\s\S]*?)```", re.IGNORECASE)
-
-
-def _resolve_image_bytes(
-    src: str,
-    image_map: Dict[str, bytes],
-    store: BlobStore,
-    job_id: str,
-) -> Optional[bytes]:
-    normalized = src.lstrip("./")
-    data = image_map.get(normalized)
-    if data is not None:
-        return data
-    if normalized.startswith("http://") or normalized.startswith("https://"):
-        return None
-    blob_path = normalized if normalized.startswith("jobs/") else f"jobs/{job_id}/{normalized}"
-    try:
-        return store.get_bytes(blob_path)
-    except Exception:
-        return None
-
-
-def _replace_mermaid_with_images(
-    markdown: str,
-    job_id: str,
-    store: BlobStore,
-) -> Tuple[str, Dict[str, bytes]]:
-    if "```mermaid" not in markdown:
-        return markdown, {}
-
-    images: Dict[str, bytes] = {}
-
-    def _render_diagram(code: str) -> Optional[bytes]:
-        if requests is None:
-            logging.warning("requests not available; skipping mermaid rendering")
-            return None
-        code = code.strip()
-        if not code:
-            return None
-        try:
-            resp = requests.post(
-                "https://kroki.io/mermaid/png",
-                json={"diagram_source": code},
-                timeout=30,
-            )
-            resp.raise_for_status()
-            return resp.content
-        except Exception:
-            logging.exception("Failed to render mermaid diagram")
-            return None
-
-    def _replace(match: re.Match[str]) -> str:
-        code = match.group(1)
-        rendered = _render_diagram(code)
-        if not rendered:
-            return match.group(0)
-        idx = len(images) + 1
-        rel_path = f"images/diagram_{idx}.png"
-        blob_path = f"jobs/{job_id}/{rel_path}"
-        try:
-            store.put_bytes(blob=blob_path, data_bytes=rendered)
-            images[rel_path] = rendered
-        except Exception:
-            logging.exception("Failed to upload mermaid diagram %s for job %s", idx, job_id)
-            return match.group(0)
-        return f"![Diagram {idx}]({rel_path})"
-
-    new_markdown = MERMAID_BLOCK_RE.sub(_replace, markdown)
-    return new_markdown, images
-
-
-def _export_alternate_formats(markdown_path: Path) -> Dict[str, Path]:
-    outputs: Dict[str, Path] = {}
-    pandoc = shutil.which("pandoc")
-    if not pandoc:
-        logging.warning("Pandoc not found; skipping PDF/DOCX export")
-        return outputs
-
-    targets = {
-        "pdf": markdown_path.with_suffix(".pdf"),
-        "docx": markdown_path.with_suffix(".docx"),
-    }
-
-    for fmt, target in targets.items():
-        cmd = [pandoc, str(markdown_path), "-o", str(target)]
-        try:
-            subprocess.run(
-                cmd,
-                check=True,
-                capture_output=True,
-                cwd=str(markdown_path.parent),
-            )
-            outputs[fmt] = target
-        except Exception as exc:
-            logging.exception("Pandoc export failed for %s: %s", fmt, exc)
-    return outputs
+    stages_core.process_finalize(data)

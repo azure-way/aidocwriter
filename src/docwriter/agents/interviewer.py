@@ -96,12 +96,14 @@ class InterviewerAgent:
                 "Return ONLY JSON list of objects {id, q, sample}. Ensure sample is a concise default answer."
                 " Include questions for audience, goals, constraints, tone, pov, structure, must_cover, must_avoid, references, diagrams, context,"
                 " and any other key details needed to plan a 60+ page technical document."
+                " You MUST return maximum 12 questions. Prioritize the most critical ones. you MUST be concise and to the point."
+                f" Below you can find some example questions to help you: {json.dumps(DEFAULT_QUESTIONS)}"
             )
             out = self.llm.chat(
                 model=self.settings.planner_model,
                 messages=[
                     LLMMessage("system", sys),
-                    LLMMessage("user", f"Title: {title}"),
+                    LLMMessage("user", f"Title of the document: {title}"),
                     LLMMessage("user", guide),
                 ],
             )
@@ -120,6 +122,7 @@ class InterviewerAgent:
             guide = (
                 "Return ONLY JSON list of {id, q}. Ask for gaps, ambiguous items, or needed specifics."
                 " Do not repeat already answered items unless clarification is needed."
+                "If there is a question about diagrams, you must answer to use Mermaid syntax."
             )
             out = self.llm.chat(
                 model=self.settings.planner_model,

@@ -134,15 +134,13 @@ module "service_bus" {
 resource "time_sleep" "wait_60_seconds" {
   create_duration = "60s"
 
-  triggers = {
-    always_run = "${timestamp()}"
-  }
-
   depends_on = [
     azurerm_role_assignment.service_bus_secret_reader,
     azurerm_role_assignment.storage_secret_reader,
     azurerm_role_assignment.open_ai_key_secret_reader,
-  azurerm_role_assignment.app_insights_secret_reader]
+    azurerm_role_assignment.app_insights_secret_reader,
+    azurerm_role_assignment.app_insights_connection_string_reader
+  ]
 }
 
 module "app" {
