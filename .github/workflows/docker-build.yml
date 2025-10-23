@@ -72,7 +72,7 @@ jobs:
           push: true
           tags: |
             ${{ secrets.ACR_LOGIN_SERVER }}/${{ matrix.image_name }}:latest
-            ${{ secrets.ACR_LOGIN_SERVER }}/${{ matrix.image_name }}:v${{ steps.version.outputs.version }}
+            ${{ secrets.ACR_LOGIN_SERVER }}/${{ matrix.image_name }}:${{ steps.version.outputs.version }}
 
   api:
     runs-on: ubuntu-latest
