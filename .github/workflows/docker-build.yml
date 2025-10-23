@@ -108,3 +108,10 @@ jobs:
           tags: |
             ${{ secrets.ACR_LOGIN_SERVER }}/docwriter-api:latest
             ${{ secrets.ACR_LOGIN_SERVER }}/docwriter-api:v${{ needs.build.outputs.version }}
+
+  terraform:
+    needs: [build, api]
+    uses: ./.github/workflows/terraform.yml
+    with:
+      docker_image_version: ${{ needs.build.outputs.version }}
+    secrets: inherit
