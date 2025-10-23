@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Dict, Tuple, set
+from typing import Any, Dict, Tuple, Set
 
 SECTION_START_RE = re.compile(r"<!-- SECTION:(?P<id>[^:]+):START -->")
 
@@ -45,13 +45,13 @@ def merge_revised_markdown(original: str, revised: str) -> str:
     return updated
 
 
-def parse_review_guidance(raw: Any) -> Tuple[str, set[str]]:
+def parse_review_guidance(raw: Any) -> Tuple[str, Set[str]]:
     if not isinstance(raw, str):
         return "", set()
     raw = raw.strip()
     if not raw:
         return "", set()
-    sections: set[str] = set()
+    sections: Set[str] = set()
     try:
         parsed = json.loads(raw)
     except Exception:
@@ -86,8 +86,8 @@ def parse_review_guidance(raw: Any) -> Tuple[str, set[str]]:
     return guidance_text, sections
 
 
-def find_placeholder_sections(markdown: str) -> set[str]:
-    placeholders: set[str] = set()
+def find_placeholder_sections(markdown: str) -> Set[str]:
+    placeholders: Set[str] = set()
     sections = extract_sections(markdown)
     for sid, section_text in sections.items():
         inner = section_text.replace(f"<!-- SECTION:{sid}:START -->", "").replace(
