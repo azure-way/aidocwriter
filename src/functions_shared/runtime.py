@@ -11,7 +11,7 @@ except Exception as exc:  # pragma: no cover - azure-functions only in runtime
         "azure-functions package is required to run DocWriter Azure Functions"
     ) from exc
 
-from docwriter import queue as queue_module
+from docwriter import workers as worker_utils
 
 Processor = Callable[[Dict[str, Any]], None]
 
@@ -41,7 +41,7 @@ def service_bus_handler(
     processor: Processor,
 ) -> None:
     """Execute a queue processor inside an Azure Function host."""
-    queue_module._configure_logging(worker_name)
+    worker_utils.configure_logging(worker_name)
     data = _decode_body(message)
     try:
         processor(data)
