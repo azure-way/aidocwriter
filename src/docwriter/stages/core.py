@@ -26,6 +26,7 @@ from docwriter.stage_utils import (
 from docwriter.storage import BlobStore
 from docwriter.summary import Summarizer
 from docwriter.telemetry import stage_timer, track_event, track_exception, StageTiming
+from .cycles import CycleState, enrich_details_with_cycles as _with_cycle_metadata
 
 import tiktoken
 
@@ -46,53 +47,6 @@ def _estimate_tokens(text: str) -> int:
     except Exception:
         return max(1, len(text) // 3)
 
-
-def _coerce_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _with_cycle_metadata(
-    details: Dict[str, Any],
-    source: Optional[Mapping[str, Any]],
-    *,
-    cycle_idx: Optional[int] = None,
-) -> Dict[str, Any]:
-    enriched = dict(details)
-    if source is not None:
-        requested_cycles_raw = source.get("cycles")
-        expected_cycles_raw = source.get("expected_cycles")
-        cycles_completed_raw = source.get("cycles_completed")
-        cycles_remaining_raw = source.get("cycles_remaining")
-
-        requested_cycles = None
-        if requested_cycles_raw is not None:
-            requested_cycles = _coerce_int(requested_cycles_raw)
-        elif expected_cycles_raw is not None:
-            requested_cycles = _coerce_int(expected_cycles_raw)
-
-        cycles_completed = _coerce_int(cycles_completed_raw, 0)
-        cycles_remaining = (
-            _coerce_int(cycles_remaining_raw)
-            if cycles_remaining_raw is not None
-            else (max(0, requested_cycles - cycles_completed) if requested_cycles is not None else None)
-        )
-
-        if requested_cycles is not None:
-            enriched.setdefault("requested_cycles", requested_cycles)
-            enriched.setdefault("expected_cycles", requested_cycles)
-        elif expected_cycles_raw is not None:
-            enriched.setdefault("expected_cycles", _coerce_int(expected_cycles_raw))
-
-        if cycles_completed_raw is not None or requested_cycles is not None:
-            enriched["cycles_completed"] = cycles_completed
-        if cycles_remaining is not None:
-            enriched["cycles_remaining"] = cycles_remaining
-    if cycle_idx is not None:
-        enriched.setdefault("cycle_index", cycle_idx)
-    return enriched
 
 
 def _format_duration(duration_s: float | None) -> str:
@@ -499,6 +453,8 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
             dependency_summaries=data.get("dependency_summaries", {}), final_markdown=draft
         )
     payload = {**data, "verification_json": verification_json}
+    cycle_state = CycleState.from_context(payload)
+    cycle_state.apply(payload)
     try:
         store = BlobStore()
         store.put_text(
@@ -522,32 +478,17 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
         or bool(placeholder_sections)
     )
 
-    requested_cycles = _coerce_int(
-        payload.get("cycles"),
-        default=_coerce_int(
-            payload.get("expected_cycles"),
-            default=_coerce_int(data.get("cycles", data.get("expected_cycles", 1))),
-        ),
-    )
-    cycles_completed = _coerce_int(payload.get("cycles_completed", data.get("cycles_completed", 0)))
-    remaining_cycles = max(0, requested_cycles - cycles_completed)
-
-    payload["cycles"] = requested_cycles
-    payload["expected_cycles"] = requested_cycles
-    payload["cycles_completed"] = cycles_completed
-    payload["cycles_remaining"] = remaining_cycles
-
     dispatch_rewrite = False
     dispatch_finalize = False
-    if needs_rewrite and cycles_completed < requested_cycles:
+    if needs_rewrite and not cycle_state.exhausted:
         payload["placeholder_sections"] = sorted(placeholder_sections)
         dispatch_rewrite = True
     else:
-        if needs_rewrite and cycles_completed >= requested_cycles:
+        if needs_rewrite and cycle_state.exhausted:
             logger.info(
                 "Job %s requires rewrite but maximum cycles (%s) reached; proceeding to finalize",
                 data.get("job_id"),
-                requested_cycles,
+                cycle_state.requested,
             )
         payload["placeholder_sections"] = []
         dispatch_finalize = True
@@ -611,6 +552,7 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
 def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> None:
     settings = get_settings()
     writer = writer or WriterAgent()
+    cycle_state = CycleState.from_context(data)
     rewrite_tokens_total = 0
     with stage_timer(job_id=data["job_id"], stage="REWRITE", cycle=int(data.get("cycles_completed", 0)) + 1) as timing:
         plan = data["plan"]
@@ -671,18 +613,12 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
                 store.put_text(blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/rewrite.md", text=text)
             except Exception:
                 pass
-    requested_cycles = _coerce_int(data.get("cycles"), default=_coerce_int(data.get("expected_cycles", 1)))
-    completed_before = _coerce_int(data.get("cycles_completed", 0))
-    completed_after = min(requested_cycles, completed_before + 1)
-    remaining_after = max(0, requested_cycles - completed_after)
+    next_cycle_state = cycle_state.consume_rewrite()
     payload = {
         **data,
-        "cycles": requested_cycles,
-        "expected_cycles": requested_cycles,
-        "cycles_remaining": remaining_after,
-        "cycles_completed": completed_after,
         "placeholder_sections": [],
     }
+    next_cycle_state.apply(payload)
     publish_stage_event("REVIEW", "QUEUED", payload)
     send_queue_message(settings.sb_queue_review, payload)
     if not rewrite_tokens_total:
