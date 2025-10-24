@@ -59,6 +59,89 @@ const SUMMARY_STAGE_ORDER = [
 ];
 const STAGE_SUFFIX_PATTERN = /_(DONE|START|QUEUED|FAILED|ERROR)$/;
 
+type StagePhase = "queued" | "in_progress" | "complete" | "failed" | "unknown";
+
+const cycleStatusStyles: Record<
+  StagePhase,
+  {
+    label: string;
+    badge: string;
+    container: string;
+  }
+> = {
+  complete: {
+    label: "Review complete",
+    badge: "border border-emerald-200 bg-emerald-50 text-emerald-700",
+    container: "border border-emerald-200 bg-emerald-50/50",
+  },
+  in_progress: {
+    label: "In progress",
+    badge: "border border-indigo-200 bg-indigo-50 text-indigo-700",
+    container: "border border-indigo-200 bg-white",
+  },
+  queued: {
+    label: "Waiting to start",
+    badge: "border border-slate-200 bg-white text-slate-600",
+    container: "border border-slate-200 bg-white",
+  },
+  failed: {
+    label: "Action required",
+    badge: "border border-rose-200 bg-rose-50 text-rose-700",
+    container: "border border-rose-200 bg-rose-50/60",
+  },
+  unknown: {
+    label: "Status pending",
+    badge: "border border-slate-200 bg-white text-slate-600",
+    container: "border border-slate-200 bg-white",
+  },
+};
+
+const normalizeStageName = (value: string): string => {
+  const base = value.replace(STAGE_SUFFIX_PATTERN, "");
+  if (base === "INTAKE_RESUMED") {
+    return "INTAKE_RESUME";
+  }
+  return base;
+};
+
+const determineEventPhase = (event: TimelineEvent | undefined): StagePhase => {
+  if (!event || typeof event.stage !== "string") {
+    return "unknown";
+  }
+  if (event.pending) {
+    return "queued";
+  }
+  const stage = event.stage;
+  if (/_FAILED$/u.test(stage) || /_ERROR$/u.test(stage)) {
+    return "failed";
+  }
+  if (/_DONE$/u.test(stage)) {
+    return "complete";
+  }
+  if (/_START$/u.test(stage)) {
+    return "in_progress";
+  }
+  if (/_QUEUED$/u.test(stage)) {
+    return "queued";
+  }
+  return "complete";
+};
+
+const stagePhaseLabel = (phase: StagePhase): string => {
+  switch (phase) {
+    case "queued":
+      return "Queued";
+    case "in_progress":
+      return "In Progress";
+    case "complete":
+      return "Completed";
+    case "failed":
+      return "Failed";
+    default:
+      return "Update";
+  }
+};
+
 export function JobDashboard({ initialJobId }: JobDashboardProps) {
   const primaryButtonClass = "btn-primary";
   const inputClass = "input-glass";
@@ -292,30 +375,19 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
   }, [groupedTimeline.cycles]);
 
   const summaryEvents = useMemo(() => {
-    const normalizeStage = (value: string) => {
-      const base = value.replace(STAGE_SUFFIX_PATTERN, "");
-      if (base === "INTAKE_RESUMED") {
-        return "INTAKE_RESUME";
-      }
-      return base;
-    };
-    const isCompletionEvent = (stage: string) => {
-      if (!stage) return false;
-      return !/(?:_QUEUED|_START|_FAILED|_ERROR)$/u.test(stage);
-    };
     const stageEventsByBase = new Map<string, TimelineEvent[]>();
     sortedTimeline.forEach((event) => {
       if (!event.stage || event.cycle != null) {
         return;
       }
-      const base = normalizeStage(event.stage);
+      const base = normalizeStageName(event.stage);
       const existing = stageEventsByBase.get(base) ?? [];
       existing.push(event);
       stageEventsByBase.set(base, existing);
     });
 
     return stageOrder.map((stage) => {
-      const base = normalizeStage(stage);
+      const base = normalizeStageName(stage);
       const related = stageEventsByBase.get(base)
         ? [...stageEventsByBase.get(base)!].sort((a, b) => {
             const ta = Number(a.ts ?? 0);
@@ -324,7 +396,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
           })
         : [];
 
-      const completionEvent = [...related].reverse().find((entry) => isCompletionEvent(entry.stage));
+      const completionEvent = [...related].reverse().find((entry) => determineEventPhase(entry) === "complete");
       if (completionEvent) {
         return {
           ...completionEvent,
@@ -336,15 +408,27 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
         };
       }
 
-      const latestRelated = related[related.length - 1];
-      if (latestRelated) {
+      const inProgressEvent = [...related].reverse().find((entry) => determineEventPhase(entry) === "in_progress");
+      if (inProgressEvent) {
         return {
-          ...latestRelated,
+          ...inProgressEvent,
           stage,
           pending: false,
           status: "active" as const,
           displayStage: formatStage(base),
-          sourceStage: latestRelated.stage,
+          sourceStage: inProgressEvent.stage,
+        };
+      }
+
+      const queuedEvent = [...related].reverse().find((entry) => determineEventPhase(entry) === "queued");
+      if (queuedEvent) {
+        return {
+          ...queuedEvent,
+          stage,
+          pending: false,
+          status: "active" as const,
+          displayStage: formatStage(base),
+          sourceStage: queuedEvent.stage,
         };
       }
 
@@ -519,52 +603,6 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
     [copyArtifactLink, downloadArtifactFile, openArtifact]
   );
 
-  const renderEvent = useCallback(
-    (event: TimelineEvent, key: string) => {
-      const tokens =
-        typeof event.details?.tokens === "number" ? event.details.tokens : null;
-      const metadataEntries = getMetadataEntries(event);
-
-      return (
-        <div
-          key={key}
-          className="rounded-2xl bg-white/80 px-4 py-3 shadow-sm shadow-white/50"
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold text-slate-700">
-                {formatStage(event.stage)}
-              </p>
-              <p className="text-xs text-slate-500">
-                {formatTimestamp(event.ts)}
-                {event.cycle ? ` · Cycle ${event.cycle}` : ""}
-              </p>
-            </div>
-            {tokens !== null && (
-              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-                {tokens.toLocaleString()} tokens
-              </span>
-            )}
-          </div>
-          {metadataEntries.length > 0 ? (
-            <div className="mt-3 grid gap-x-6 gap-y-3 text-xs text-slate-500 sm:grid-cols-2">
-              {metadataEntries.map(({ label, value }) => (
-                <div key={`${key}-${label}`} className="flex flex-col">
-                  <span className="font-semibold text-slate-600">{label}</span>
-                  <span className="break-words">{value}</span>
-                </div>
-              ))}
-            </div>
-          ) : event.message ? (
-            <p className="mt-2 text-sm text-slate-600">{event.message}</p>
-          ) : null}
-          {event.artifact ? renderArtifactActions(event.artifact, "sm") : null}
-        </div>
-      );
-    },
-    [formatStage, formatTimestamp, getMetadataEntries, renderArtifactActions]
-  );
-
   useEffect(() => {
     return () => {
       clearNotice();
@@ -583,6 +621,80 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
     return getMetadataEntries(pseudoEvent);
   }, [status, getMetadataEntries]);
 
+  type ReviewCycleDetail = {
+    cycle: number;
+    status: StagePhase;
+    metadataEntries: Array<{ label: string; value: string }>;
+    timeline: Array<{ key: string; label: string; ts?: number | string | null }>;
+    completionTs?: number | string | null;
+    lastUpdateTs?: number | string | null;
+  };
+
+  const reviewCycleDetails = useMemo<ReviewCycleDetail[]>(() => {
+    return groupedTimeline.cycles.map(({ cycle, events }) => {
+      const sortedEvents = [...events].sort((a, b) => {
+        const ta = Number(a.ts ?? 0);
+        const tb = Number(b.ts ?? 0);
+        return ta - tb;
+      });
+      const reviewEvents = sortedEvents.filter(
+        (ev) => normalizeStageName(ev.stage ?? "") === "REVIEW"
+      );
+      const timelineSource = reviewEvents.length ? reviewEvents : sortedEvents;
+
+      const completionEvent = [...reviewEvents]
+        .reverse()
+        .find((ev) => determineEventPhase(ev) === "complete");
+      const failedEvent = [...timelineSource]
+        .reverse()
+        .find((ev) => determineEventPhase(ev) === "failed");
+      const inProgressEvent = [...timelineSource]
+        .reverse()
+        .find((ev) => determineEventPhase(ev) === "in_progress");
+      const queuedEvent = [...timelineSource]
+        .reverse()
+        .find((ev) => determineEventPhase(ev) === "queued");
+
+      let status: StagePhase = "queued";
+      if (failedEvent) {
+        status = "failed";
+      } else if (completionEvent) {
+        status = "complete";
+      } else if (inProgressEvent) {
+        status = "in_progress";
+      } else if (queuedEvent) {
+        status = "queued";
+      } else {
+        status = "unknown";
+      }
+
+      const metadataSource =
+        completionEvent ??
+        inProgressEvent ??
+        queuedEvent ??
+        timelineSource[timelineSource.length - 1];
+      const metadataEntries = metadataSource ? getMetadataEntries(metadataSource) : [];
+
+      const timeline = timelineSource.map((ev, idx) => ({
+        key: `${cycle}-${idx}-${ev.stage}`,
+        label: stagePhaseLabel(determineEventPhase(ev)),
+        ts: ev.ts,
+      }));
+
+      const completionTs = completionEvent?.ts ?? null;
+      const lastUpdateTs = metadataSource?.ts ?? timelineSource[timelineSource.length - 1]?.ts ?? null;
+
+      return {
+        cycle,
+        status,
+        metadataEntries,
+        timeline,
+        completionTs,
+        lastUpdateTs,
+      };
+    });
+  }, [groupedTimeline.cycles, getMetadataEntries]);
+
   const renderSummaryStage = useCallback(
     (event: TimelineEvent, index: number) => {
       const status = event.status ?? (event.pending ? "pending" : "complete");
@@ -599,8 +711,18 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
         : active
         ? "border border-indigo-300 bg-indigo-50 text-indigo-600"
         : "bg-white border border-slate-200 text-slate-400";
-      const showCycles = event.stage === "REVIEW" && groupedTimeline.cycles.length > 0;
+      const showCycles = event.stage === "REVIEW" && reviewCycleDetails.length > 0;
       const metadataEntries = getMetadataEntries(event);
+      const completedCycles = showCycles
+        ? reviewCycleDetails.filter((detail) => detail.status === "complete").length
+        : 0;
+      const activeCycleDetail = showCycles
+        ? reviewCycleDetails.find((detail) => detail.status === "in_progress")
+        : undefined;
+      const failedCycleDetail = showCycles
+        ? reviewCycleDetails.find((detail) => detail.status === "failed")
+        : undefined;
+      const totalCycles = showCycles ? reviewCycleDetails.length : 0;
       return (
         <div
           key={`summary-${event.stage}-${index}`}
@@ -637,16 +759,33 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
               {event.artifact && (completed || active)
                 ? renderArtifactActions(event.artifact, "sm")
                 : null}
+              {showCycles && totalCycles > 0 ? (
+                <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                  <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600">
+                    {completedCycles}/{totalCycles} cycles complete
+                  </span>
+                  {activeCycleDetail ? (
+                    <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-indigo-600">
+                      Active cycle: {activeCycleDetail.cycle}
+                    </span>
+                  ) : null}
+                  {failedCycleDetail ? (
+                    <span className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-rose-700">
+                      Attention: Cycle {failedCycleDetail.cycle}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
             {showCycles ? (
               <div className="space-y-3">
-                {groupedTimeline.cycles.map(({ cycle, events: cycleEvents }) => {
-                  const isExpanded = expandedCycles[cycle] ?? false;
-                  const latest = cycleEvents[cycleEvents.length - 1];
+                {reviewCycleDetails.map((detail) => {
+                  const statusStyle = cycleStatusStyles[detail.status] ?? cycleStatusStyles.unknown;
+                  const isExpanded = expandedCycles[detail.cycle] ?? false;
                   return (
                     <div
-                      key={`cycle-${cycle}`}
-                      className="rounded-2xl border border-slate-100 bg-white/80 px-4 py-3 shadow-inner shadow-white/30"
+                      key={`cycle-${detail.cycle}`}
+                      className={`rounded-2xl px-4 py-3 shadow-inner shadow-white/30 transition ${statusStyle.container}`}
                     >
                       <button
                         type="button"
@@ -654,37 +793,63 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
                         onClick={() =>
                           setExpandedCycles((prev) => ({
                             ...prev,
-                            [cycle]: !isExpanded,
+                            [detail.cycle]: !isExpanded,
                           }))
                         }
                       >
                         <div>
                           <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">
-                            Review cycle {cycle}
+                            Review cycle {detail.cycle}
                           </p>
-                          {latest?.ts ? (
+                          {detail.completionTs ? (
                             <p className="text-xs text-slate-500">
-                              Completed {formatTimestamp(latest.ts)}
+                              Completed {formatTimestamp(detail.completionTs)}
+                            </p>
+                          ) : detail.lastUpdateTs ? (
+                            <p className="text-xs text-slate-500">
+                              Last update {formatTimestamp(detail.lastUpdateTs)}
                             </p>
                           ) : null}
-                          {typeof latest?.details?.duration_s === "number" && (
-                            <p className="text-xs text-slate-500">
-                              Duration: {formatDuration(latest.details.duration_s)}
-                            </p>
-                          )}
                         </div>
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-medium ${statusStyle.badge}`}
+                        >
+                          {statusStyle.label}
+                        </span>
                         <span className="text-lg text-slate-500">
                           {isExpanded ? "−" : "+"}
                         </span>
                       </button>
                       {isExpanded && (
-                        <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
-                          {cycleEvents.map((cycleEvent, cycleIdx) =>
-                            renderEvent(
-                              cycleEvent,
-                              `cycle-${cycle}-${cycleIdx}-${cycleEvent.stage}`
-                            )
-                          )}
+                        <div className="mt-3 space-y-3 border-t border-slate-100 pt-3">
+                          {detail.timeline.length > 0 ? (
+                            <ol className="space-y-2 text-xs text-slate-500">
+                              {detail.timeline.map((item) => (
+                                <li
+                                  key={item.key}
+                                  className="flex items-center justify-between gap-3"
+                                >
+                                  <span className="font-semibold text-slate-600">
+                                    {item.label}
+                                  </span>
+                                  <span>{item.ts ? formatTimestamp(item.ts) : "—"}</span>
+                                </li>
+                              ))}
+                            </ol>
+                          ) : null}
+                          {detail.metadataEntries.length > 0 ? (
+                            <div className="grid gap-x-6 gap-y-3 text-xs text-slate-500 sm:grid-cols-2">
+                              {detail.metadataEntries.map(({ label, value }) => (
+                                <div
+                                  key={`cycle-${detail.cycle}-${label}`}
+                                  className="flex flex-col"
+                                >
+                                  <span className="font-semibold text-slate-600">{label}</span>
+                                  <span className="break-words">{value}</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
                         </div>
                       )}
                     </div>
@@ -698,13 +863,11 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
     },
     [
       expandedCycles,
-      formatDuration,
       formatStage,
       formatTimestamp,
-      groupedTimeline.cycles,
       getMetadataEntries,
       renderArtifactActions,
-      renderEvent,
+      reviewCycleDetails,
     ]
   );
 

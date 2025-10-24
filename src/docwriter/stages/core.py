@@ -31,6 +31,8 @@ import tiktoken
 
 ENCODING_NAME = "cl100k_base"
 
+logger = logging.getLogger(__name__)
+
 
 def _estimate_tokens(text: str) -> int:
     if not text:
@@ -43,6 +45,13 @@ def _estimate_tokens(text: str) -> int:
         return len(encoding.encode(text))
     except Exception:
         return max(1, len(text) // 3)
+
+
+def _coerce_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _format_duration(duration_s: float | None) -> str:
@@ -475,11 +484,29 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
         or bool(placeholder_sections)
     )
 
-    if needs_rewrite and int(payload.get("cycles_remaining", 0)) > 0:
-        payload["placeholder_sections"] = sorted(placeholder_sections)
-        publish_stage_event("REWRITE", "QUEUED", payload)
-        send_queue_message(settings.sb_queue_rewrite, payload)
-    else:
+    raw_cycles_remaining = payload.get("cycles_remaining")
+    remaining_cycles = _coerce_int(raw_cycles_remaining, default=_coerce_int(data.get("cycles_remaining")))
+    payload["cycles_remaining"] = remaining_cycles
+    cycles_completed = _coerce_int(payload.get("cycles_completed", data.get("cycles_completed", 0)))
+    payload["cycles_completed"] = cycles_completed
+
+    if needs_rewrite:
+        if remaining_cycles <= 0 and cycles_completed == 0:
+            logger.warning(
+                "Job %s needs rewrite but has %r cycles remaining; granting a single additional cycle.",
+                data.get("job_id"),
+                raw_cycles_remaining,
+            )
+            remaining_cycles = 1
+            payload["cycles_remaining"] = remaining_cycles
+        if remaining_cycles > 0:
+            payload["placeholder_sections"] = sorted(placeholder_sections)
+            publish_stage_event("REWRITE", "QUEUED", payload)
+            send_queue_message(settings.sb_queue_rewrite, payload)
+            # Early return so we do not fall through to finalize scheduling.
+            return
+    # No rewrite (either not needed or no cycles left)
+    payload["placeholder_sections"] = []
         publish_stage_event("FINALIZE", "QUEUED", payload)
         send_queue_message(settings.sb_queue_finalize, payload)
     artifact_path = f"jobs/{data['job_id']}/cycle_{cycle_idx}/contradictions.json"
