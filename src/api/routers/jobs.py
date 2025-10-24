@@ -16,8 +16,22 @@ from ..models import (
     ResumeResponse,
     StatusResponse,
     BlobDownloadResponse,
+    StatusTimelineResponse,
+    StatusEventEntry,
 )
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+SUMMARY_STAGE_ORDER = [
+    "ENQUEUED",
+    "INTAKE_READY",
+    "INTAKE_RESUMED",
+    "PLAN_DONE",
+    "WRITE_DONE",
+    "REVIEW_DONE",
+    "VERIFY_DONE",
+    "REWRITE_DONE",
+    "FINALIZE_DONE",
+]
 
 
 @router.post("", response_model=JobCreateResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -76,6 +90,60 @@ def job_status(job_id: str) -> StatusResponse:
         cycle=latest.get("cycle"),
         details=details,
     )
+
+
+@router.get("/{job_id}/timeline", response_model=StatusTimelineResponse)
+def job_timeline(job_id: str) -> StatusTimelineResponse:
+    try:
+        status_store = get_status_table_store()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    events_raw = status_store.timeline(job_id)
+    events: list[StatusEventEntry] = []
+    expected_cycles = 1
+    for item in events_raw:
+        details = item.get("details")
+        if isinstance(details, str):
+            try:
+                details = json.loads(details)
+            except json.JSONDecodeError:
+                details = {"raw": details}
+        ts_raw = item.get("ts")
+        try:
+            ts_value = float(ts_raw)
+        except (TypeError, ValueError):
+            ts_value = None
+        cycle_raw = item.get("cycle")
+        try:
+            cycle_value = int(cycle_raw) if cycle_raw is not None else None
+        except (TypeError, ValueError):
+            cycle_value = None
+        events.append(
+            StatusEventEntry(
+                stage=str(item.get("stage", "UNKNOWN")),
+                message=item.get("message"),
+                artifact=item.get("artifact"),
+                ts=ts_value,
+                cycle=cycle_value,
+                details=details if isinstance(details, dict) else None,
+            )
+        )
+        if isinstance(details, dict):
+            expected = details.get("expected_cycles")
+            if isinstance(expected, (int, float)):
+                expected_cycles = max(expected_cycles, int(expected))
+            elif isinstance(expected, str):
+                try:
+                    expected_cycles = max(expected_cycles, int(expected))
+                except ValueError:
+                    pass
+        if cycle_value:
+            expected_cycles = max(expected_cycles, cycle_value)
+    meta = {
+        "stage_order": SUMMARY_STAGE_ORDER,
+        "expected_cycles": expected_cycles,
+    }
+    return StatusTimelineResponse(job_id=job_id, events=events, meta=meta)
 
 
 @router.get("/artifacts")

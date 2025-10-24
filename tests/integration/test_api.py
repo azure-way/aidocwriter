@@ -13,15 +13,20 @@ from api.main import app
 class FakeStatusTableStore:
     def __init__(self) -> None:
         self._latest: Dict[str, Dict] = {}
+        self._history: Dict[str, list[Dict]] = {}
 
     def record(self, payload: Dict) -> None:
         job_id = payload.get("job_id")
         if not job_id:
             return
         self._latest[job_id] = payload
+        self._history.setdefault(job_id, []).append(payload.copy())
 
     def latest(self, job_id: str) -> Dict | None:
         return self._latest.get(job_id)
+
+    def timeline(self, job_id: str) -> list[Dict]:
+        return self._history.get(job_id, [])
 
 
 @pytest.fixture(autouse=True)
@@ -129,3 +134,19 @@ def test_job_status_reflects_latest_event(client, fake_status_table):
 
     resp_missing = client.get("/jobs/unknown/status")
     assert resp_missing.status_code == 404
+
+
+def test_job_timeline_returns_events(client, fake_status_table):
+    job_id = client.post(
+        "/jobs",
+        json={"title": "Doc", "audience": "Architects"},
+    ).json()["job_id"]
+
+    fake_status_table.record({"job_id": job_id, "stage": "PLAN", "cycle": 1, "ts": 1.0})
+    fake_status_table.record({"job_id": job_id, "stage": "WRITE_DONE", "cycle": None, "ts": 2.0})
+
+    resp = client.get(f"/jobs/{job_id}/timeline")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["job_id"] == job_id
+    assert len(payload["events"]) == 2

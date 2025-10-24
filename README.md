@@ -4,18 +4,20 @@ Overview
 - Generates long, consistent Markdown documents (>60 pages) with Mermaid diagrams.
 - Agentic pipeline: Planner (o3), Writer (gpt-4.1), Reviewer set (o3: general + style + cohesion + executive summary).
 - Queue-driven architecture on Azure Service Bus; artifacts stored in Azure Blob Storage.
-- Terminal-first CLI to enqueue jobs, run stage workers, resume intake, and monitor status.
-- Well-structured Python package with tests and documentation.
- - Interactive intake: collects detailed requirements before planning for higher quality.
+- REST-first workflow: jobs are created and monitored via FastAPI; Azure Functions host each worker stage.
+- Interactive intake: collects detailed requirements before planning for higher quality output.
 
-Quick Start (Queue-only)
-1) Install dependencies
+Quick Start
+1) Install dependencies (local development)
    - Python 3.10+
    - Create a virtualenv, then:
+     ```bash
      pip install -e .[dev]
-   - PDF export uses WeasyPrint; install its system dependencies (Cairo, Pango). See https://weasyprint.readthedocs.io/en/stable/install/ for platform-specific guidance.
+     npm install --prefix ui
+     ```
+   - PDF export uses WeasyPrint; install its system dependencies (Cairo, Pango). See https://weasyprint.readthedocs.io/en/stable/install/.
 2) Configure environment variables
-   - Export credentials and queue names before running workers or the API. Example:
+   - Export credentials and queue names before running workers, the API, or Functions. Example:
      ```bash
      export OPENAI_API_KEY=...
      export OPENAI_BASE_URL=...
@@ -30,35 +32,41 @@ Quick Start (Queue-only)
      export SERVICE_BUS_QUEUE_REWRITE=docwriter-rewrite
      export SERVICE_BUS_QUEUE_FINALIZE=docwriter-finalize
      export SERVICE_BUS_TOPIC_STATUS=docwriter-status
+     export SERVICE_BUS_STATUS_SUBSCRIPTION=status-writer
      export AZURE_STORAGE_CONNECTION_STRING=...
      export AZURE_BLOB_CONTAINER=docwriter
      export APPINSIGHTS_INSTRUMENTATION_KEY=... # optional, enables Application Insights telemetry
      ```
    - Optional overrides: `DOCWRITER_PLANNER_MODEL`, `DOCWRITER_WRITER_MODEL`, `DOCWRITER_STREAM`, etc. See `src/docwriter/config.py` for the full list.
-3) Run CLI
-   - Start intake workers:
-     docwriter worker-plan-intake
-     docwriter worker-intake-resume
-   - Enqueue a job (targets >60 pages):
-     docwriter generate \
-       --title "Large Language Models in Production" \
-       --audience "Senior engineers" \
-       --out /absolute/path/document.md \
-       --cycles 3
-   - Start remaining workers (each in own terminal or scaled horizontally):
-     docwriter worker-plan
-     docwriter worker-write
-     docwriter worker-review
-     docwriter worker-verify
-     docwriter worker-rewrite
-     docwriter worker-finalize
-   - Watch status events:
-     docwriter monitor
-   - Answer intake:
-     1) Open the Blob path from status event INTAKE_READY (jobs/<job_id>/intake/questions.json)
-     2) Prepare answers.json and upload via:
-        docwriter resume --job-id <job_id> --answers /path/answers.json
-     3) Pipeline continues automatically
+3) Run locally (API + Functions)
+   - Start the API: `uvicorn api.main:app --reload`
+   - Start Functions host (needs Azure Functions Core Tools):
+     ```bash
+     cd src/functions_plan_intake && func start
+     # repeat per function or package with Container Apps
+     ```
+   - Run the Next.js UI: `npm run dev --prefix ui` (requires `NEXT_PUBLIC_API_BASE_URL`)
+   - For lightweight development, you can invoke workers directly via `python -m docwriter.queue` helper functions or tests.
+
+GitHub Workflows
+- `.github/workflows/docker-build.yml` builds all Function + API images and automatically invokes the Terraform workflow, passing the resolved Docker tag.
+- `.github/workflows/terraform.yml` provisions Azure resources (Service Bus, Blob Storage, Container Apps, monitoring). Triggered manually or via `workflow_call` from the build pipeline.
+
+FastAPI / REST usage
+- Start locally: `uvicorn api.main:app --reload`
+- `POST /jobs` → Enqueue a document (`{"title": "...", "audience": "...", "cycles": 2}`)
+- `POST /jobs/{job_id}/resume` → Upload intake answers (`{"answers": {...}}`) and advance the pipeline
+- `GET /jobs/{job_id}/status` → Latest stage snapshot
+- `GET /jobs/{job_id}/timeline` → Full chronological list of status events (including review cycles and durations)
+- `GET /jobs/artifacts?path=jobs/<job_id>/final.md` → Download an artifact via the API (proxy for Blob Storage)
+- `POST /intake/questions` → Generate a tailored intake questionnaire
+- `GET /healthz` → Basic health-check
+- (Authentication and additional endpoints will be added alongside the UI.)
+
+UI Highlights
+- The `ui/` Next.js app shows job status, timeline, token usage, durations, and model names with glassmorphism styling.
+- Timeline view displays every stage; review cycles can expand to show each pass (review, verify, rewrite) with metrics.
+- Artifact actions use the `/jobs/artifacts` API so no direct Blob permissions are needed.
 
 Architecture (Queue-driven)
 - Agents
@@ -129,12 +137,7 @@ Azure Hosting Plan (in progress)
 - **Shared configuration:** All runtimes (CLI, Functions, API) read configuration exclusively from environment variables.
 
 FastAPI / REST usage (early preview)
-- Start locally: `uvicorn api.main:app --reload`
-- `POST /jobs` → Enqueue a document (`{"title": "...", "audience": "..."}`)
-- `POST /jobs/{job_id}/resume` → Upload intake answers (`{"answers": {...}}`) and advance the pipeline
-- `POST /intake/questions` → Generate a questionnaire tailored to a proposed title
-- `GET /healthz` → Basic health-check
-  (More endpoints and authentication will be added alongside the UI.)
+- Detailed in the Quick Start section. Timeline and artifact endpoints give full stage visibility without Blob access.
 
 _Target directory highlights_
 ```
@@ -173,8 +176,8 @@ Consistency Strategy
 
 Status & Monitoring
 - Topic: SERVICE_BUS_TOPIC_STATUS (default docwriter-status)
-- Events: ENQUEUED, INTAKE_READY, INTAKE_RESUMED, PLAN_DONE, WRITE_DONE, REVIEW_DONE, VERIFY_DONE, REWRITE_DONE, FINALIZE_DONE
-- Console monitor: `docwriter monitor` (uses subscription SERVICE_BUS_STATUS_SUBSCRIPTION, default console)
+- Worker publishes a message for every stage transition (including START/QUEUED events). Messages include duration, token usage, model name, and artifact path.
+- API exposes `/jobs/{job_id}/timeline` and `/jobs/artifacts?...` so external clients can render dashboards without direct Service Bus or Blob access.
 
 Telemetry & Metrics
 - Stage timings recorded and uploaded to Blob under jobs/<job_id>/metrics/...
@@ -185,9 +188,9 @@ Scalability
 - Azure Service Bus decouples producers and workers for horizontal scale; Status topic enables dashboards.
 
 -Configuration
-- Configuration is driven by environment variables (see the Quick Start section). No TOML file is required.
-- Models: Planner/Reviewers default to `o3`, Writer defaults to `gpt-4.1`.
-- Frontend UI lives under `ui/` (Next.js + Tailwind). Set `NEXT_PUBLIC_API_BASE_URL` to your API endpoint and run `npm run dev` inside `ui/` for the glass-styled intake experience.
+- Configuration is driven by environment variables (see Quick Start). No CLI commands remain; everything runs through FastAPI and Functions.
+- Models: Planner/Reviewers default to `o3`, Writer defaults to `gpt-4.1`. Token usage is reported using real API metrics when available.
+- Frontend UI lives under `ui/` (Next.js + Tailwind). Set `NEXT_PUBLIC_API_BASE_URL` to your API endpoint and run `npm run dev --prefix ui` for the glass-styled intake experience.
 
 Testing
 - Run: pytest -q

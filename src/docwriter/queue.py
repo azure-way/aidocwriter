@@ -89,7 +89,22 @@ def send_job(job: Job) -> str:
             job_id=job_id,
             stage="ENQUEUED",
             ts=time.time(),
-            message="Job enqueued",
+            message=(
+                f"stage completed: Job Submitted | stage document: {blob_path} | "
+                "stage time: n/a | stage tokens: 0 | stage model: n/a | "
+                f"stage notes: requested cycles {job.cycles}"
+            ),
+            artifact=blob_path,
+            extra={
+                "details": {
+                    "duration_s": None,
+                    "tokens": 0,
+                    "model": None,
+                    "artifact": blob_path,
+                    "notes": f"requested cycles {job.cycles}",
+                    "expected_cycles": job.cycles,
+                }
+            },
         ).to_payload()
     )
     track_event(

@@ -50,6 +50,21 @@ class BlobDownloadResponse(BaseModel):
     content_type: str
 
 
+class StatusEventEntry(BaseModel):
+    stage: str
+    message: Optional[str] = None
+    artifact: Optional[str] = None
+    ts: Optional[float] = None
+    cycle: Optional[int] = None
+    details: Optional[Dict[str, Any]] = None
+
+
+class StatusTimelineResponse(BaseModel):
+    job_id: str
+    events: List[StatusEventEntry]
+    meta: Optional[Dict[str, Any]] = None
+
+
 class IntakeQuestionsRequest(BaseModel):
     title: str = Field(..., description="Document title to scope intake questions")
 
