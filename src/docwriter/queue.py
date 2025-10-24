@@ -74,6 +74,7 @@ def send_job(job: Job) -> str:
         "title": job.title,
         "audience": job.audience,
         "out": blob_path,
+        "cycles": max(1, int(job.cycles)),
         "cycles_remaining": max(1, int(job.cycles)),
         "cycles_completed": 0,
     }
@@ -151,6 +152,7 @@ def send_resume(job_id: str) -> None:
                     "title": context.get("title"),
                     "audience": context.get("audience"),
                     "out": context.get("out"),
+                    "cycles": context.get("cycles"),
                     "cycles_remaining": context.get("cycles_remaining"),
                     "cycles_completed": context.get("cycles_completed"),
                 }

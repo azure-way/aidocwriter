@@ -62,18 +62,34 @@ def _with_cycle_metadata(
 ) -> Dict[str, Any]:
     enriched = dict(details)
     if source is not None:
-        cycles_remaining = source.get("cycles_remaining")
-        cycles_completed = source.get("cycles_completed")
-        requested_cycles = source.get("cycles")
-        expected_cycles = source.get("expected_cycles")
-        if cycles_remaining is not None:
-            enriched["cycles_remaining"] = _coerce_int(cycles_remaining)
-        if cycles_completed is not None:
-            enriched["cycles_completed"] = _coerce_int(cycles_completed)
+        requested_cycles_raw = source.get("cycles")
+        expected_cycles_raw = source.get("expected_cycles")
+        cycles_completed_raw = source.get("cycles_completed")
+        cycles_remaining_raw = source.get("cycles_remaining")
+
+        requested_cycles = None
+        if requested_cycles_raw is not None:
+            requested_cycles = _coerce_int(requested_cycles_raw)
+        elif expected_cycles_raw is not None:
+            requested_cycles = _coerce_int(expected_cycles_raw)
+
+        cycles_completed = _coerce_int(cycles_completed_raw, 0)
+        cycles_remaining = (
+            _coerce_int(cycles_remaining_raw)
+            if cycles_remaining_raw is not None
+            else (max(0, requested_cycles - cycles_completed) if requested_cycles is not None else None)
+        )
+
         if requested_cycles is not None:
-            enriched.setdefault("requested_cycles", _coerce_int(requested_cycles))
-        if expected_cycles is not None:
-            enriched.setdefault("expected_cycles", _coerce_int(expected_cycles))
+            enriched.setdefault("requested_cycles", requested_cycles)
+            enriched.setdefault("expected_cycles", requested_cycles)
+        elif expected_cycles_raw is not None:
+            enriched.setdefault("expected_cycles", _coerce_int(expected_cycles_raw))
+
+        if cycles_completed_raw is not None or requested_cycles is not None:
+            enriched["cycles_completed"] = cycles_completed
+        if cycles_remaining is not None:
+            enriched["cycles_remaining"] = cycles_remaining
     if cycle_idx is not None:
         enriched.setdefault("cycle_index", cycle_idx)
     return enriched
@@ -180,6 +196,7 @@ def process_plan_intake(data: Dict[str, Any], interviewer: InterviewerAgent | No
                 "title": data.get("title"),
                 "audience": data.get("audience"),
                 "out": data.get("out"),
+                "cycles": data.get("cycles"),
                 "cycles_remaining": data.get("cycles_remaining"),
                 "cycles_completed": data.get("cycles_completed"),
             }
@@ -505,30 +522,33 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
         or bool(placeholder_sections)
     )
 
-    raw_cycles_remaining = payload.get("cycles_remaining")
-    remaining_cycles = _coerce_int(raw_cycles_remaining, default=_coerce_int(data.get("cycles_remaining")))
-    payload["cycles_remaining"] = remaining_cycles
+    requested_cycles = _coerce_int(
+        payload.get("cycles"),
+        default=_coerce_int(
+            payload.get("expected_cycles"),
+            default=_coerce_int(data.get("cycles", data.get("expected_cycles", 1))),
+        ),
+    )
     cycles_completed = _coerce_int(payload.get("cycles_completed", data.get("cycles_completed", 0)))
+    remaining_cycles = max(0, requested_cycles - cycles_completed)
+
+    payload["cycles"] = requested_cycles
+    payload["expected_cycles"] = requested_cycles
     payload["cycles_completed"] = cycles_completed
+    payload["cycles_remaining"] = remaining_cycles
 
     dispatch_rewrite = False
     dispatch_finalize = False
-    if needs_rewrite:
-        if remaining_cycles <= 0 and cycles_completed == 0:
-            logger.warning(
-                "Job %s needs rewrite but has %r cycles remaining; granting a single additional cycle.",
-                data.get("job_id"),
-                raw_cycles_remaining,
-            )
-            remaining_cycles = 1
-            payload["cycles_remaining"] = remaining_cycles
-        if remaining_cycles > 0:
-            payload["placeholder_sections"] = sorted(placeholder_sections)
-            dispatch_rewrite = True
-        else:
-            payload["placeholder_sections"] = []
-            dispatch_finalize = True
+    if needs_rewrite and cycles_completed < requested_cycles:
+        payload["placeholder_sections"] = sorted(placeholder_sections)
+        dispatch_rewrite = True
     else:
+        if needs_rewrite and cycles_completed >= requested_cycles:
+            logger.info(
+                "Job %s requires rewrite but maximum cycles (%s) reached; proceeding to finalize",
+                data.get("job_id"),
+                requested_cycles,
+            )
         payload["placeholder_sections"] = []
         dispatch_finalize = True
     artifact_path = f"jobs/{data['job_id']}/cycle_{cycle_idx}/contradictions.json"
@@ -651,10 +671,16 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
                 store.put_text(blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/rewrite.md", text=text)
             except Exception:
                 pass
+    requested_cycles = _coerce_int(data.get("cycles"), default=_coerce_int(data.get("expected_cycles", 1)))
+    completed_before = _coerce_int(data.get("cycles_completed", 0))
+    completed_after = min(requested_cycles, completed_before + 1)
+    remaining_after = max(0, requested_cycles - completed_after)
     payload = {
         **data,
-        "cycles_remaining": max(0, int(data.get("cycles_remaining", 0)) - 1),
-        "cycles_completed": int(data.get("cycles_completed", 0)) + 1,
+        "cycles": requested_cycles,
+        "expected_cycles": requested_cycles,
+        "cycles_remaining": remaining_after,
+        "cycles_completed": completed_after,
         "placeholder_sections": [],
     }
     publish_stage_event("REVIEW", "QUEUED", payload)
