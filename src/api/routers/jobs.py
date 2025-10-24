@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from azure.core.exceptions import ResourceNotFoundError, HttpResponseError
 
@@ -24,14 +25,53 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 SUMMARY_STAGE_ORDER = [
     "ENQUEUED",
     "INTAKE_READY",
-    "INTAKE_RESUMED",
-    "PLAN_DONE",
-    "WRITE_DONE",
-    "REVIEW_DONE",
-    "VERIFY_DONE",
-    "REWRITE_DONE",
-    "FINALIZE_DONE",
+    "INTAKE_RESUME",
+    "PLAN",
+    "WRITE",
+    "REVIEW",
+    "VERIFY",
+    "REWRITE",
+    "FINALIZE",
 ]
+
+
+def _parse_stage_message(message: str) -> dict[str, object]:
+    if not isinstance(message, str) or not message.strip():
+        return {}
+    parts = [part.strip() for part in message.split(" | ") if part.strip()]
+    if not parts:
+        return {}
+    key_map = {
+        "stage_completed": "stage_label",
+        "stage_document": "document",
+        "stage_time": "duration",
+        "stage_tokens": "tokens_display",
+        "stage_model": "model",
+        "stage_notes": "notes",
+    }
+    data: dict[str, object] = {}
+    for part in parts:
+        if ": " not in part:
+            continue
+        key, value = part.split(": ", 1)
+        normalized_key = key.strip().lower().replace(" ", "_")
+        mapped_key = key_map.get(normalized_key)
+        if not mapped_key:
+            continue
+        clean_value = value.strip()
+        if not clean_value:
+            continue
+        if mapped_key == "tokens_display":
+            data[mapped_key] = clean_value
+            numeric = re.sub(r"[^\d]", "", clean_value)
+            if numeric.isdigit():
+                try:
+                    data["tokens"] = int(numeric)
+                except ValueError:
+                    pass
+            continue
+        data[mapped_key] = clean_value
+    return data
 
 
 @router.post("", response_model=JobCreateResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -118,6 +158,17 @@ def job_timeline(job_id: str) -> StatusTimelineResponse:
             cycle_value = int(cycle_raw) if cycle_raw is not None else None
         except (TypeError, ValueError):
             cycle_value = None
+        parsed_message = _parse_stage_message(item.get("message"))
+        details_dict: dict[str, object] = {}
+        if isinstance(details, dict):
+            details_dict.update(details)
+        if parsed_message:
+            existing = details_dict.get("parsed_message")
+            if isinstance(existing, dict):
+                existing.update(parsed_message)
+            else:
+                details_dict["parsed_message"] = parsed_message
+        details_payload = details_dict if details_dict else None
         events.append(
             StatusEventEntry(
                 stage=str(item.get("stage", "UNKNOWN")),
@@ -125,7 +176,7 @@ def job_timeline(job_id: str) -> StatusTimelineResponse:
                 artifact=item.get("artifact"),
                 ts=ts_value,
                 cycle=cycle_value,
-                details=details if isinstance(details, dict) else None,
+                details=details_payload,
             )
         )
         if isinstance(details, dict):

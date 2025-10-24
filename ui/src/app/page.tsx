@@ -45,13 +45,13 @@ const POLL_INTERVAL_MS = 5000;
 const SUMMARY_STAGE_ORDER = [
   "ENQUEUED",
   "INTAKE_READY",
-  "INTAKE_RESUMED",
-  "PLAN_DONE",
-  "WRITE_DONE",
-  "REVIEW_DONE",
-  "VERIFY_DONE",
-  "REWRITE_DONE",
-  "FINALIZE_DONE",
+  "INTAKE_RESUME",
+  "PLAN",
+  "WRITE",
+  "REVIEW",
+  "VERIFY",
+  "REWRITE",
+  "FINALIZE",
 ];
 const STAGE_SUFFIX_PATTERN = /_(DONE|START|QUEUED|FAILED|ERROR)$/;
 
@@ -277,7 +277,17 @@ export default function Home() {
   }, [groupedTimeline.cycles]);
 
   const summaryEvents = useMemo(() => {
-    const normalizeStage = (value: string) => value.replace(STAGE_SUFFIX_PATTERN, "");
+    const normalizeStage = (value: string) => {
+      const base = value.replace(STAGE_SUFFIX_PATTERN, "");
+      if (base === "INTAKE_RESUMED") {
+        return "INTAKE_RESUME";
+      }
+      return base;
+    };
+    const isCompletionEvent = (stage: string) => {
+      if (!stage) return false;
+      return !/(?:_QUEUED|_START|_FAILED|_ERROR)$/u.test(stage);
+    };
     const stageEventsByBase = new Map<string, TimelineEvent[]>();
     sortedTimeline.forEach((event) => {
       if (!event.stage || event.cycle != null) {
@@ -299,22 +309,15 @@ export default function Home() {
           })
         : [];
 
-      let exactMatch: TimelineEvent | undefined;
-      for (let idx = related.length - 1; idx >= 0; idx -= 1) {
-        if (related[idx].stage === stage) {
-          exactMatch = related[idx];
-          break;
-        }
-      }
-
-      if (exactMatch) {
+      const completionEvent = [...related].reverse().find((entry) => isCompletionEvent(entry.stage));
+      if (completionEvent) {
         return {
-          ...exactMatch,
+          ...completionEvent,
           stage,
           pending: false,
           status: "complete" as const,
           displayStage: formatStage(base),
-          sourceStage: exactMatch.stage,
+          sourceStage: completionEvent.stage,
         };
       }
 
@@ -447,6 +450,47 @@ export default function Home() {
         typeof event.details?.model === "string" ? event.details.model : null;
       const notes =
         typeof event.details?.notes === "string" ? event.details.notes : null;
+      const parsedMessage = (() => {
+        if (!event.details || typeof event.details !== "object") {
+          return null;
+        }
+        const raw = (event.details as Record<string, unknown>)["parsed_message"];
+        return raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
+      })();
+      const parsedFields = (() => {
+        if (!parsedMessage) {
+          return null;
+        }
+        const stageLabel = parsedMessage["stage_label"];
+        const document = parsedMessage["document"];
+        const durationText = parsedMessage["duration"];
+        const tokensNumber = parsedMessage["tokens"];
+        const tokensDisplay = parsedMessage["tokens_display"];
+        const parsedModel = parsedMessage["model"];
+        const parsedNotes = parsedMessage["notes"];
+        const entries: Array<{ label: string; value: string }> = [];
+        if (typeof stageLabel === "string" && stageLabel.trim() && stageLabel.toLowerCase() !== "n/a") {
+          entries.push({ label: "Stage", value: stageLabel.trim() });
+        }
+        if (typeof document === "string" && document.trim() && document.toLowerCase() !== "n/a") {
+          entries.push({ label: "Document", value: document.trim() });
+        }
+        if (typeof durationText === "string" && durationText.trim() && durationText.toLowerCase() !== "n/a") {
+          entries.push({ label: "Stage Time", value: durationText.trim() });
+        }
+        if (typeof tokensNumber === "number") {
+          entries.push({ label: "Tokens", value: tokensNumber.toLocaleString() });
+        } else if (typeof tokensDisplay === "string" && tokensDisplay.trim() && tokensDisplay.toLowerCase() !== "n/a") {
+          entries.push({ label: "Tokens", value: tokensDisplay.trim() });
+        }
+        if (typeof parsedModel === "string" && parsedModel.trim() && parsedModel.toLowerCase() !== "n/a") {
+          entries.push({ label: "Model", value: parsedModel.trim() });
+        }
+        if (typeof parsedNotes === "string" && parsedNotes.trim() && parsedNotes.toLowerCase() !== "n/a") {
+          entries.push({ label: "Notes", value: parsedNotes.trim() });
+        }
+        return entries.length ? entries : null;
+      })();
 
       return (
         <div
@@ -469,9 +513,18 @@ export default function Home() {
               </span>
             )}
           </div>
-          {event.message && (
+          {parsedFields ? (
+            <div className="mt-2 grid gap-x-4 gap-y-2 text-xs text-slate-500 sm:grid-cols-2">
+              {parsedFields.map(({ label, value }) => (
+                <div key={`${key}-${label}`} className="flex flex-col">
+                  <span className="font-semibold text-slate-600">{label}</span>
+                  <span>{value}</span>
+                </div>
+              ))}
+            </div>
+          ) : event.message ? (
             <p className="mt-2 text-sm text-slate-600">{event.message}</p>
-          )}
+          ) : null}
           <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
             {duration !== null && (
               <span className="rounded-full bg-slate-100 px-3 py-1">
@@ -520,6 +573,7 @@ export default function Home() {
         : active
         ? "border border-indigo-300 bg-indigo-50 text-indigo-600"
         : "bg-white border border-slate-200 text-slate-400";
+      const showCycles = event.stage === "REVIEW" && groupedTimeline.cycles.length > 0;
       return (
         <div
           key={`summary-${event.stage}-${index}`}
@@ -530,27 +584,91 @@ export default function Home() {
           >
             {index + 1}
           </span>
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-slate-700">
-              {label}
-            </p>
-            <p className="text-xs text-slate-500">{secondaryText}</p>
-            {active && event.sourceStage && event.sourceStage !== event.stage ? (
-              <p className="mt-1 text-xs text-slate-400">
-                {formatStage(event.sourceStage)}
+          <div className="flex-1 space-y-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-700">
+                {label}
               </p>
+              <p className="text-xs text-slate-500">{secondaryText}</p>
+              {active && event.sourceStage && event.sourceStage !== event.stage ? (
+                <p className="mt-1 text-xs text-slate-400">
+                  {formatStage(event.sourceStage)}
+                </p>
+              ) : null}
+              {event.message && (completed || active) ? (
+                <p className="mt-1 text-xs text-slate-500">{event.message}</p>
+              ) : null}
+              {event.artifact && (completed || active)
+                ? renderArtifactActions(event.artifact, "sm")
+                : null}
+            </div>
+            {showCycles ? (
+              <div className="space-y-3">
+                {groupedTimeline.cycles.map(({ cycle, events: cycleEvents }) => {
+                  const isExpanded = expandedCycles[cycle] ?? false;
+                  const latest = cycleEvents[cycleEvents.length - 1];
+                  return (
+                    <div
+                      key={`cycle-${cycle}`}
+                      className="rounded-2xl border border-slate-100 bg-white/80 px-4 py-3 shadow-inner shadow-white/30"
+                    >
+                      <button
+                        type="button"
+                        className="flex w-full items-center justify-between text-left"
+                        onClick={() =>
+                          setExpandedCycles((prev) => ({
+                            ...prev,
+                            [cycle]: !isExpanded,
+                          }))
+                        }
+                      >
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">
+                            Review cycle {cycle}
+                          </p>
+                          {latest?.ts ? (
+                            <p className="text-xs text-slate-500">
+                              Completed {formatTimestamp(latest.ts)}
+                            </p>
+                          ) : null}
+                          {typeof latest?.details?.duration_s === "number" && (
+                            <p className="text-xs text-slate-500">
+                              Duration: {formatDuration(latest.details.duration_s)}
+                            </p>
+                          )}
+                        </div>
+                        <span className="text-lg text-slate-500">
+                          {isExpanded ? "−" : "+"}
+                        </span>
+                      </button>
+                      {isExpanded && (
+                        <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
+                          {cycleEvents.map((cycleEvent, cycleIdx) =>
+                            renderEvent(
+                              cycleEvent,
+                              `cycle-${cycle}-${cycleIdx}-${cycleEvent.stage}`
+                            )
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             ) : null}
-            {event.message && (completed || active) ? (
-              <p className="mt-1 text-xs text-slate-500">{event.message}</p>
-            ) : null}
-            {event.artifact && (completed || active)
-              ? renderArtifactActions(event.artifact, "sm")
-              : null}
           </div>
         </div>
       );
     },
-    [formatStage, formatTimestamp, renderArtifactActions]
+    [
+      expandedCycles,
+      formatDuration,
+      formatStage,
+      formatTimestamp,
+      groupedTimeline.cycles,
+      renderArtifactActions,
+      renderEvent,
+    ]
   );
 
   return (
@@ -708,53 +826,6 @@ export default function Home() {
                     renderSummaryStage(event, idx)
                   )}
                 </div>
-                {groupedTimeline.cycles.map(({ cycle, events }) => {
-                  const isExpanded = expandedCycles[cycle] ?? false;
-                  const latest = events[events.length - 1];
-                  return (
-                    <div
-                      key={`cycle-${cycle}`}
-                      className="rounded-3xl bg-white/85 px-4 py-3 shadow"
-                    >
-                      <button
-                        type="button"
-                        className="flex w-full items-center justify-between text-left"
-                        onClick={() =>
-                          setExpandedCycles((prev) => ({
-                            ...prev,
-                            [cycle]: !isExpanded,
-                          }))
-                        }
-                      >
-                        <div>
-                          <p className="text-sm font-semibold text-slate-700">
-                            Review cycle {cycle}
-                          </p>
-                          {latest?.ts ? (
-                            <p className="text-xs text-slate-500">
-                              Completed {formatTimestamp(latest.ts)}
-                            </p>
-                          ) : null}
-                          {typeof latest?.details?.duration_s === "number" && (
-                            <p className="text-xs text-slate-500">
-                              Duration: {formatDuration(latest.details.duration_s)}
-                            </p>
-                          )}
-                        </div>
-                        <span className="text-xl text-slate-500">
-                          {isExpanded ? "−" : "+"}
-                        </span>
-                      </button>
-                      {isExpanded && (
-                        <div className="mt-3 space-y-3 border-t border-slate-100 pt-3">
-                          {events.map((event, idx) =>
-                            renderEvent(event, `cycle-${cycle}-${idx}-${event.stage}`)
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
                 {summaryEvents.every((event) => event.pending) && (
                   <p className="text-sm text-slate-500">
                     Timeline updates will appear here as the pipeline progresses.
