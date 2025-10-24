@@ -41,6 +41,10 @@ interface TimelineEvent {
   sourceStage?: string;
 }
 
+type JobDashboardProps = {
+  initialJobId?: string;
+};
+
 const POLL_INTERVAL_MS = 5000;
 const SUMMARY_STAGE_ORDER = [
   "ENQUEUED",
@@ -55,16 +59,16 @@ const SUMMARY_STAGE_ORDER = [
 ];
 const STAGE_SUFFIX_PATTERN = /_(DONE|START|QUEUED|FAILED|ERROR)$/;
 
-export default function Home() {
+export function JobDashboard({ initialJobId }: JobDashboardProps) {
   const primaryButtonClass = "btn-primary";
   const inputClass = "input-glass";
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState<1 | 2 | 3>(initialJobId ? 3 : 1);
   const [title, setTitle] = useState("");
   const [audience, setAudience] = useState("");
   const [cycles, setCycles] = useState(2);
   const [questions, setQuestions] = useState<IntakeQuestion[]>([]);
   const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [jobId, setJobId] = useState<string | null>(null);
+  const [jobId, setJobId] = useState<string | null>(initialJobId ?? null);
   const [status, setStatus] = useState<StatusPayload | null>(null);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [timelineMeta, setTimelineMeta] = useState<Record<string, unknown>>({});
@@ -92,6 +96,17 @@ export default function Home() {
     },
     [clearNotice]
   );
+
+  useEffect(() => {
+    if (!initialJobId) {
+      return;
+    }
+    setStep(3);
+    setTimeline([]);
+    setTimelineMeta({});
+    clearNotice();
+    setJobId((prev) => (prev === initialJobId ? prev : initialJobId));
+  }, [initialJobId, clearNotice]);
 
   useEffect(() => {
     if (!jobId) return;
@@ -360,6 +375,70 @@ export default function Home() {
     return `${secs} sec`;
   }, []);
 
+  const getMetadataEntries = useCallback(
+    (event: TimelineEvent): Array<{ label: string; value: string }> => {
+      const entries: Array<{ label: string; value: string }> = [];
+      const seen = new Set<string>();
+      const parsedRaw =
+        event.details && typeof event.details === "object"
+          ? (event.details as Record<string, unknown>)["parsed_message"]
+          : null;
+      const parsed =
+        parsedRaw && typeof parsedRaw === "object"
+          ? (parsedRaw as Record<string, unknown>)
+          : null;
+
+      const addEntry = (label: string, value: unknown) => {
+        if (value == null) return;
+        const text = String(value).trim();
+        if (!text || text.toLowerCase() === "n/a" || seen.has(label)) return;
+        entries.push({ label, value: text });
+        seen.add(label);
+      };
+
+      const stageLabel =
+        (parsed?.stage_label && typeof parsed.stage_label === "string" && parsed.stage_label.trim()) ||
+        event.displayStage ||
+        formatStage(event.stage);
+      addEntry("Stage", stageLabel);
+
+      const documentValue =
+        (parsed?.document && typeof parsed.document === "string" && parsed.document.trim()) ||
+        (typeof event.artifact === "string" && event.artifact.trim()
+          ? event.artifact
+          : typeof event.details?.artifact === "string"
+          ? event.details.artifact
+          : null);
+      addEntry("Document", documentValue);
+
+      const durationText =
+        (parsed?.duration && typeof parsed.duration === "string" && parsed.duration.trim()) ||
+        (typeof event.details?.duration_s === "number" ? formatDuration(event.details.duration_s) : null);
+      addEntry("Stage Time", durationText);
+
+      const tokensDisplay =
+        (typeof parsed?.tokens === "number" && parsed.tokens > 0 && parsed.tokens.toLocaleString()) ||
+        (parsed?.tokens_display && typeof parsed.tokens_display === "string" && parsed.tokens_display.trim()) ||
+        (typeof event.details?.tokens === "number" && event.details.tokens > 0
+          ? event.details.tokens.toLocaleString()
+          : null);
+      addEntry("Tokens", tokensDisplay);
+
+      const modelValue =
+        (parsed?.model && typeof parsed.model === "string" && parsed.model.trim()) ||
+        (typeof event.details?.model === "string" ? event.details.model : null);
+      addEntry("Model", modelValue);
+
+      const notesValue =
+        (parsed?.notes && typeof parsed.notes === "string" && parsed.notes.trim()) ||
+        (typeof event.details?.notes === "string" ? event.details.notes : null);
+      addEntry("Notes", notesValue);
+
+      return entries;
+    },
+    [formatDuration, formatStage]
+  );
+
   const openArtifact = useCallback((path: string) => {
     const url = getArtifactUrl(path);
     window.open(url, "_blank", "noopener,noreferrer");
@@ -444,53 +523,7 @@ export default function Home() {
     (event: TimelineEvent, key: string) => {
       const tokens =
         typeof event.details?.tokens === "number" ? event.details.tokens : null;
-      const duration =
-        typeof event.details?.duration_s === "number" ? event.details.duration_s : null;
-      const model =
-        typeof event.details?.model === "string" ? event.details.model : null;
-      const notes =
-        typeof event.details?.notes === "string" ? event.details.notes : null;
-      const parsedMessage = (() => {
-        if (!event.details || typeof event.details !== "object") {
-          return null;
-        }
-        const raw = (event.details as Record<string, unknown>)["parsed_message"];
-        return raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
-      })();
-      const parsedFields = (() => {
-        if (!parsedMessage) {
-          return null;
-        }
-        const stageLabel = parsedMessage["stage_label"];
-        const document = parsedMessage["document"];
-        const durationText = parsedMessage["duration"];
-        const tokensNumber = parsedMessage["tokens"];
-        const tokensDisplay = parsedMessage["tokens_display"];
-        const parsedModel = parsedMessage["model"];
-        const parsedNotes = parsedMessage["notes"];
-        const entries: Array<{ label: string; value: string }> = [];
-        if (typeof stageLabel === "string" && stageLabel.trim() && stageLabel.toLowerCase() !== "n/a") {
-          entries.push({ label: "Stage", value: stageLabel.trim() });
-        }
-        if (typeof document === "string" && document.trim() && document.toLowerCase() !== "n/a") {
-          entries.push({ label: "Document", value: document.trim() });
-        }
-        if (typeof durationText === "string" && durationText.trim() && durationText.toLowerCase() !== "n/a") {
-          entries.push({ label: "Stage Time", value: durationText.trim() });
-        }
-        if (typeof tokensNumber === "number") {
-          entries.push({ label: "Tokens", value: tokensNumber.toLocaleString() });
-        } else if (typeof tokensDisplay === "string" && tokensDisplay.trim() && tokensDisplay.toLowerCase() !== "n/a") {
-          entries.push({ label: "Tokens", value: tokensDisplay.trim() });
-        }
-        if (typeof parsedModel === "string" && parsedModel.trim() && parsedModel.toLowerCase() !== "n/a") {
-          entries.push({ label: "Model", value: parsedModel.trim() });
-        }
-        if (typeof parsedNotes === "string" && parsedNotes.trim() && parsedNotes.toLowerCase() !== "n/a") {
-          entries.push({ label: "Notes", value: parsedNotes.trim() });
-        }
-        return entries.length ? entries : null;
-      })();
+      const metadataEntries = getMetadataEntries(event);
 
       return (
         <div
@@ -513,40 +546,23 @@ export default function Home() {
               </span>
             )}
           </div>
-          {parsedFields ? (
-            <div className="mt-2 grid gap-x-4 gap-y-2 text-xs text-slate-500 sm:grid-cols-2">
-              {parsedFields.map(({ label, value }) => (
+          {metadataEntries.length > 0 ? (
+            <div className="mt-3 grid gap-x-6 gap-y-3 text-xs text-slate-500 sm:grid-cols-2">
+              {metadataEntries.map(({ label, value }) => (
                 <div key={`${key}-${label}`} className="flex flex-col">
                   <span className="font-semibold text-slate-600">{label}</span>
-                  <span>{value}</span>
+                  <span className="break-words">{value}</span>
                 </div>
               ))}
             </div>
           ) : event.message ? (
             <p className="mt-2 text-sm text-slate-600">{event.message}</p>
           ) : null}
-          <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
-            {duration !== null && (
-              <span className="rounded-full bg-slate-100 px-3 py-1">
-                {`Duration: ${formatDuration(duration)}`}
-              </span>
-            )}
-            {model && (
-              <span className="rounded-full bg-slate-100 px-3 py-1">
-                {`Model: ${model}`}
-              </span>
-            )}
-            {notes && (
-              <span className="rounded-full bg-slate-100 px-3 py-1">
-                {notes}
-              </span>
-            )}
-          </div>
           {event.artifact ? renderArtifactActions(event.artifact, "sm") : null}
         </div>
       );
     },
-    [formatDuration, formatStage, formatTimestamp, renderArtifactActions]
+    [formatStage, formatTimestamp, getMetadataEntries, renderArtifactActions]
   );
 
   useEffect(() => {
@@ -556,6 +572,16 @@ export default function Home() {
   }, [clearNotice]);
 
   const artifactActions = status?.artifact ? renderArtifactActions(status.artifact) : null;
+  const statusMetadata = useMemo(() => {
+    if (!status) return [];
+    const pseudoEvent: TimelineEvent = {
+      stage: status.stage,
+      message: status.message,
+      artifact: status.artifact,
+      details: status.details,
+    };
+    return getMetadataEntries(pseudoEvent);
+  }, [status, getMetadataEntries]);
 
   const renderSummaryStage = useCallback(
     (event: TimelineEvent, index: number) => {
@@ -574,6 +600,7 @@ export default function Home() {
         ? "border border-indigo-300 bg-indigo-50 text-indigo-600"
         : "bg-white border border-slate-200 text-slate-400";
       const showCycles = event.stage === "REVIEW" && groupedTimeline.cycles.length > 0;
+      const metadataEntries = getMetadataEntries(event);
       return (
         <div
           key={`summary-${event.stage}-${index}`}
@@ -595,7 +622,16 @@ export default function Home() {
                   {formatStage(event.sourceStage)}
                 </p>
               ) : null}
-              {event.message && (completed || active) ? (
+              {metadataEntries.length > 0 ? (
+                <div className="mt-3 grid gap-x-6 gap-y-3 text-xs text-slate-500 sm:grid-cols-2">
+                  {metadataEntries.map(({ label, value }) => (
+                    <div key={`summary-${event.stage}-${label}`} className="flex flex-col">
+                      <span className="font-semibold text-slate-600">{label}</span>
+                      <span className="break-words">{value}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : event.message && (completed || active) ? (
                 <p className="mt-1 text-xs text-slate-500">{event.message}</p>
               ) : null}
               {event.artifact && (completed || active)
@@ -666,6 +702,7 @@ export default function Home() {
       formatStage,
       formatTimestamp,
       groupedTimeline.cycles,
+      getMetadataEntries,
       renderArtifactActions,
       renderEvent,
     ]
@@ -799,7 +836,16 @@ export default function Home() {
               </div>
             </div>
             <div className="space-y-4">
-              {status?.message ? (
+              {statusMetadata.length > 0 ? (
+                <div className="grid gap-x-6 gap-y-3 text-xs text-slate-500 sm:grid-cols-2">
+                  {statusMetadata.map(({ label, value }) => (
+                    <div key={`status-${label}`} className="flex flex-col">
+                      <span className="font-semibold text-slate-600">{label}</span>
+                      <span className="break-words">{value}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : status?.message ? (
                 <p className="text-sm text-slate-500">{status.message}</p>
               ) : (
                 <p className="text-sm text-slate-500">
@@ -838,4 +884,8 @@ export default function Home() {
       )}
     </section>
   );
+}
+
+export default function Home() {
+  return <JobDashboard />;
 }

@@ -506,7 +506,7 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
                 artifact_path,
                 timing.duration_s,
                 verify_tokens,
-                settings.verifier_model,
+                settings.reviewer_model,
                 notes_message,
             ),
             cycle=cycle_idx,
@@ -519,7 +519,7 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
                 "details": {
                     "duration_s": timing.duration_s,
                     "tokens": verify_tokens,
-                    "model": settings.verifier_model,
+                    "model": settings.reviewer_model,
                     "artifact": artifact_path,
                 }
             },
