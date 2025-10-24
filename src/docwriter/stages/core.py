@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Mapping
 
 from docwriter.agents.cohesion_reviewer import CohesionReviewerAgent
 from docwriter.agents.interviewer import InterviewerAgent
@@ -52,6 +52,31 @@ def _coerce_int(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _with_cycle_metadata(
+    details: Dict[str, Any],
+    source: Optional[Mapping[str, Any]],
+    *,
+    cycle_idx: Optional[int] = None,
+) -> Dict[str, Any]:
+    enriched = dict(details)
+    if source is not None:
+        cycles_remaining = source.get("cycles_remaining")
+        cycles_completed = source.get("cycles_completed")
+        requested_cycles = source.get("cycles")
+        expected_cycles = source.get("expected_cycles")
+        if cycles_remaining is not None:
+            enriched["cycles_remaining"] = _coerce_int(cycles_remaining)
+        if cycles_completed is not None:
+            enriched["cycles_completed"] = _coerce_int(cycles_completed)
+        if requested_cycles is not None:
+            enriched.setdefault("requested_cycles", _coerce_int(requested_cycles))
+        if expected_cycles is not None:
+            enriched.setdefault("expected_cycles", _coerce_int(expected_cycles))
+    if cycle_idx is not None:
+        enriched.setdefault("cycle_index", cycle_idx)
+    return enriched
 
 
 def _format_duration(duration_s: float | None) -> str:
@@ -113,6 +138,7 @@ def _stage_completed_event(
     tokens: Optional[int] = None,
     model: Optional[str] = None,
     notes: Optional[str] = None,
+    source: Optional[Mapping[str, Any]] = None,
 ) -> StatusEvent:
     stage_label = _pretty_stage(stage)
     message = _build_stage_message(stage_label, artifact, timing.duration_s, tokens, model, notes)
@@ -124,6 +150,7 @@ def _stage_completed_event(
         "notes": notes,
     }
     details = {k: v for k, v in details.items() if v is not None}
+    details = _with_cycle_metadata(details, source, cycle_idx=timing.cycle)
     extra = {"details": details} if details else {}
     return StatusEvent(
         job_id=job_id,
@@ -172,6 +199,16 @@ def process_plan_intake(data: Dict[str, Any], interviewer: InterviewerAgent | No
     question_tokens = _usage_total(getattr(interviewer.llm, "last_usage", None))
     if not question_tokens:
         question_tokens = _estimate_tokens(json.dumps(questions, ensure_ascii=False))
+    intake_details = _with_cycle_metadata(
+        {
+            "duration_s": timing.duration_s,
+            "tokens": question_tokens,
+            "model": settings.planner_model,
+            "artifact": artifact_path,
+            "notes": "upload answers.json and resume",
+        },
+        data,
+    )
     publish_status(
         StatusEvent(
             job_id=data["job_id"],
@@ -186,15 +223,7 @@ def process_plan_intake(data: Dict[str, Any], interviewer: InterviewerAgent | No
                 "stage notes: upload answers.json and resume",
             ),
             artifact=artifact_path,
-            extra={
-                "details": {
-                    "duration_s": timing.duration_s,
-                    "tokens": question_tokens,
-                    "model": settings.planner_model,
-                    "artifact": artifact_path,
-                    "notes": "upload answers.json and resume",
-                }
-            },
+            extra={"details": intake_details},
         )
     )
 
@@ -204,6 +233,15 @@ def process_intake_resume(data: Dict[str, Any]) -> None:
     with stage_timer(job_id=data["job_id"], stage="INTAKE_RESUME") as timing:
         publish_stage_event("PLAN", "QUEUED", data)
         send_queue_message(settings.sb_queue_plan, data)
+        resume_details = _with_cycle_metadata(
+            {
+                "duration_s": timing.duration_s,
+                "tokens": 0,
+                "model": None,
+                "artifact": None,
+            },
+            data,
+        )
         publish_status(
             StatusEvent(
                 job_id=data["job_id"],
@@ -216,14 +254,7 @@ def process_intake_resume(data: Dict[str, Any]) -> None:
                     0,
                     None,
                 ),
-                extra={
-                    "details": {
-                        "duration_s": timing.duration_s,
-                        "tokens": 0,
-                        "model": None,
-                        "artifact": None,
-                    }
-                },
+                extra={"details": resume_details},
             )
         )
 
@@ -307,26 +338,14 @@ def process_plan(data: Dict[str, Any], planner: PlannerAgent | None = None) -> N
     if not plan_tokens:
         plan_tokens = _estimate_tokens(json.dumps(payload["plan"], ensure_ascii=False))
     publish_status(
-        StatusEvent(
-            job_id=data["job_id"],
-            stage="PLAN_DONE",
-            ts=time.time(),
-            message=_build_stage_message(
-                "Plan",
-                artifact_path,
-                timing.duration_s,
-                plan_tokens,
-                settings.planner_model,
-            ),
+        _stage_completed_event(
+            data["job_id"],
+            "PLAN",
+            timing,
             artifact=artifact_path,
-            extra={
-                "details": {
-                    "duration_s": timing.duration_s,
-                    "tokens": plan_tokens,
-                    "model": settings.planner_model,
-                    "artifact": artifact_path,
-                }
-            },
+            tokens=plan_tokens,
+            model=settings.planner_model,
+            source=data,
         )
     )
     print("[worker-plan] Dispatched job", data.get("job_id"), "to writing queue")
@@ -378,6 +397,7 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
             artifact=f"jobs/{data['job_id']}/draft.md",
             tokens=write_tokens_total,
             model=settings.writer_model,
+            source=data,
         )
     )
 
@@ -428,6 +448,7 @@ def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) 
             artifact=f"jobs/{data['job_id']}/cycle_{cycle_idx}/review.json",
             tokens=review_tokens,
             model=settings.reviewer_model,
+            source=data,
         )
     )
 
@@ -490,6 +511,8 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
     cycles_completed = _coerce_int(payload.get("cycles_completed", data.get("cycles_completed", 0)))
     payload["cycles_completed"] = cycles_completed
 
+    dispatch_rewrite = False
+    dispatch_finalize = False
     if needs_rewrite:
         if remaining_cycles <= 0 and cycles_completed == 0:
             logger.warning(
@@ -501,14 +524,13 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
             payload["cycles_remaining"] = remaining_cycles
         if remaining_cycles > 0:
             payload["placeholder_sections"] = sorted(placeholder_sections)
-            publish_stage_event("REWRITE", "QUEUED", payload)
-            send_queue_message(settings.sb_queue_rewrite, payload)
-            # Early return so we do not fall through to finalize scheduling.
-            return
-    # No rewrite (either not needed or no cycles left)
-    payload["placeholder_sections"] = []
-        publish_stage_event("FINALIZE", "QUEUED", payload)
-        send_queue_message(settings.sb_queue_finalize, payload)
+            dispatch_rewrite = True
+        else:
+            payload["placeholder_sections"] = []
+            dispatch_finalize = True
+    else:
+        payload["placeholder_sections"] = []
+        dispatch_finalize = True
     artifact_path = f"jobs/{data['job_id']}/cycle_{cycle_idx}/contradictions.json"
     verify_tokens = _usage_total(getattr(verifier.llm, "last_usage", None))
     if not verify_tokens:
@@ -543,15 +565,27 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
             placeholder_sections=bool(placeholder_sections),
             artifact=artifact_path,
             extra={
-                "details": {
-                    "duration_s": timing.duration_s,
-                    "tokens": verify_tokens,
-                    "model": settings.reviewer_model,
-                    "artifact": artifact_path,
-                }
+                "details": _with_cycle_metadata(
+                    {
+                        "duration_s": timing.duration_s,
+                        "tokens": verify_tokens,
+                        "model": settings.reviewer_model,
+                        "artifact": artifact_path,
+                        **({"notes": notes_message} if notes_message else {}),
+                    },
+                    payload,
+                    cycle_idx=cycle_idx,
+                )
             },
         )
     )
+
+    if dispatch_rewrite:
+        publish_stage_event("REWRITE", "QUEUED", payload)
+        send_queue_message(settings.sb_queue_rewrite, payload)
+    elif dispatch_finalize:
+        publish_stage_event("FINALIZE", "QUEUED", payload)
+        send_queue_message(settings.sb_queue_finalize, payload)
 
 
 def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> None:
@@ -635,6 +669,7 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
             artifact=data.get("out"),
             tokens=rewrite_tokens_total,
             model=settings.writer_model,
+            source=payload,
         )
     )
 
@@ -672,5 +707,6 @@ def process_finalize(data: Dict[str, Any]) -> None:
             artifact=f"jobs/{data['job_id']}/final.md",
             tokens=final_tokens,
             model=None,
+            source=data,
         )
     )

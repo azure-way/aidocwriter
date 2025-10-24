@@ -103,6 +103,8 @@ def send_job(job: Job) -> str:
                     "artifact": blob_path,
                     "notes": f"requested cycles {job.cycles}",
                     "expected_cycles": job.cycles,
+                    "cycles_remaining": payload["cycles_remaining"],
+                    "cycles_completed": payload["cycles_completed"],
                 }
             },
         ).to_payload()
