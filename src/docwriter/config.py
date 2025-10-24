@@ -77,7 +77,7 @@ class Settings:
     # Azure Blob Storage
     blob_connection_string: str | None = None
     blob_container: str = "docwriter"
-    status_table_name: str = os.getenv("DOCWRITER_STATUS_TABLE", "docwriter_status")
+    status_table_name: str = os.getenv("DOCWRITER_STATUS_TABLE", "DocWriterStatus")
 
     # OpenTelemetry (optional)
     otlp_endpoint: str | None = None
