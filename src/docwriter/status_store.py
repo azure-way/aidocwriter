@@ -82,7 +82,7 @@ class StatusTableStore:
 
     def timeline(self, job_id: str) -> List[Dict[str, Any]]:
         filter_expr = f"PartitionKey eq '{job_id}' and RowKey ne 'latest'"
-        entities = list(self._table.query_entities(filter=filter_expr))
+        entities = list(self._table.query_entities(query_filter=filter_expr))
         events: List[Dict[str, Any]] = []
         for entity in sorted(entities, key=lambda e: e["RowKey"]):
             event: Dict[str, Any] = {"job_id": job_id}
