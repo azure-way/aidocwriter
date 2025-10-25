@@ -179,15 +179,16 @@ module "app" {
     PLANTUML_SERVER_APP_NAME        = "aidocwriter-plantuml"
   }
   functions_images = {
-    plan-intake   = "${module.container_registry.url}/docwriter-plan-intake:${var.docker_image_version}"
-    intake-resume = "${module.container_registry.url}/docwriter-intake-resume:${var.docker_image_version}"
-    plan          = "${module.container_registry.url}/docwriter-plan:${var.docker_image_version}"
-    write         = "${module.container_registry.url}/docwriter-write:${var.docker_image_version}"
-    review        = "${module.container_registry.url}/docwriter-review:${var.docker_image_version}"
-    verify        = "${module.container_registry.url}/docwriter-verify:${var.docker_image_version}"
-    rewrite       = "${module.container_registry.url}/docwriter-rewrite:${var.docker_image_version}"
-    finalize      = "${module.container_registry.url}/docwriter-finalize:${var.docker_image_version}"
-    status        = "${module.container_registry.url}/docwriter-status:${var.docker_image_version}"
+    plan-intake     = "${module.container_registry.url}/docwriter-plan-intake:${var.docker_image_version}"
+    intake-resume   = "${module.container_registry.url}/docwriter-intake-resume:${var.docker_image_version}"
+    plan            = "${module.container_registry.url}/docwriter-plan:${var.docker_image_version}"
+    write           = "${module.container_registry.url}/docwriter-write:${var.docker_image_version}"
+    review          = "${module.container_registry.url}/docwriter-review:${var.docker_image_version}"
+    verify          = "${module.container_registry.url}/docwriter-verify:${var.docker_image_version}"
+    rewrite         = "${module.container_registry.url}/docwriter-rewrite:${var.docker_image_version}"
+    finalize        = "${module.container_registry.url}/docwriter-finalize:${var.docker_image_version}"
+    status          = "${module.container_registry.url}/docwriter-status:${var.docker_image_version}"
+    diagram-render  = "${module.container_registry.url}/docwriter-diagram-render:${var.docker_image_version}"
   }
   functions_env = {
     OPENAI_BASE_URL                 = var.openai_base_url
@@ -204,6 +205,7 @@ module "app" {
     SERVICE_BUS_STATUS_SUBSCRIPTION = "status-writer"
     AZURE_BLOB_CONTAINER            = "docwriter"
     DOCWRITER_STATUS_TABLE          = "DocWriterStatus"
+    PLANTUML_SERVER_APP_NAME        = "aidocwriter-plantuml"
   }
   api_secrets = [
     {
