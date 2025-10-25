@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GlassCard } from "@/components/GlassCard";
 import { GradientTitle } from "@/components/GradientTitle";
+import { JobQuickLinks } from "@/components/JobQuickLinks";
+import { TimelineCard } from "@/components/timeline/TimelineCard";
+import { TimelineStageCard } from "@/components/timeline/TimelineStageCard";
 import {
   createJob,
   fetchIntakeQuestions,
@@ -12,6 +15,17 @@ import {
   getArtifactUrl,
   resumeJob,
 } from "@/lib/api";
+import {
+  CombinedCycleDetail,
+  CYCLE_AWARE_STAGE_SET,
+  CYCLE_AWARE_STAGES,
+  determineEventPhase,
+  normalizeStageName,
+  StageCycleDetail,
+  StagePhase,
+  stagePhaseLabel,
+  TimelineEvent,
+} from "@/lib/timeline";
 
 interface IntakeQuestion {
   id: string;
@@ -26,19 +40,6 @@ interface StatusPayload {
   message?: string;
   cycle?: number;
   details?: Record<string, unknown> | null;
-}
-
-interface TimelineEvent {
-  stage: string;
-  message?: string;
-  artifact?: string;
-  ts?: number | string | null;
-  cycle?: number | null;
-  details?: Record<string, unknown> | null;
-  pending?: boolean;
-  status?: "pending" | "active" | "complete";
-  displayStage?: string;
-  sourceStage?: string;
 }
 
 type JobDashboardProps = {
@@ -57,100 +58,11 @@ const SUMMARY_STAGE_ORDER = [
   "REWRITE",
   "FINALIZE",
 ];
-const STAGE_SUFFIX_PATTERN = /_(DONE|START|QUEUED|FAILED|ERROR)$/;
 
-type StagePhase = "queued" | "in_progress" | "complete" | "failed" | "unknown";
-
-const CYCLE_AWARE_STAGES = ["REVIEW", "VERIFY", "REWRITE"] as const;
-const CYCLE_AWARE_STAGE_SET = new Set(CYCLE_AWARE_STAGES);
-
-const cycleStatusStyles: Record<StagePhase, { badge: string; container: string }> = {
-  complete: {
-    badge: "border border-emerald-200 bg-emerald-50 text-emerald-700",
-    container: "border border-emerald-200 bg-emerald-50/50",
-  },
-  in_progress: {
-    badge: "border border-indigo-200 bg-indigo-50 text-indigo-700",
-    container: "border border-indigo-200 bg-white",
-  },
-  queued: {
-    badge: "border border-slate-200 bg-white text-slate-600",
-    container: "border border-slate-200 bg-white",
-  },
-  failed: {
-    badge: "border border-rose-200 bg-rose-50 text-rose-700",
-    container: "border border-rose-200 bg-rose-50/60",
-  },
-  unknown: {
-    badge: "border border-slate-200 bg-white text-slate-600",
-    container: "border border-slate-200 bg-white",
-  },
-};
 const SUBSTEP_LABELS: Record<string, string> = {
   REVIEW: "Review",
   VERIFY: "Verify",
   REWRITE: "Rewrite",
-};
-
-const normalizeStageName = (value: string): string => {
-  const base = value.replace(STAGE_SUFFIX_PATTERN, "");
-  if (base === "INTAKE_RESUMED") {
-    return "INTAKE_RESUME";
-  }
-  return base;
-};
-
-const determineEventPhase = (event: TimelineEvent | undefined): StagePhase => {
-  if (!event || typeof event.stage !== "string") {
-    return "unknown";
-  }
-  if (event.pending) {
-    return "queued";
-  }
-  const stage = event.stage;
-  if (/_FAILED$/u.test(stage) || /_ERROR$/u.test(stage)) {
-    return "failed";
-  }
-  if (/_DONE$/u.test(stage)) {
-    return "complete";
-  }
-  if (/_START$/u.test(stage)) {
-    return "in_progress";
-  }
-  if (/_QUEUED$/u.test(stage)) {
-    return "queued";
-  }
-  return "complete";
-};
-
-const stagePhaseLabel = (phase: StagePhase): string => {
-  switch (phase) {
-    case "queued":
-      return "Queued";
-    case "in_progress":
-      return "In Progress";
-    case "complete":
-      return "Completed";
-    case "failed":
-      return "Failed";
-    default:
-      return "Update";
-  }
-};
-
-const cycleStatusLabel = (phase: StagePhase, stageLabel: string): string => {
-  switch (phase) {
-    case "queued":
-      return `${stageLabel} not started`;
-    case "in_progress":
-      return `${stageLabel} running`;
-    case "complete":
-      return `${stageLabel} complete`;
-    case "failed":
-      return `${stageLabel} requires attention`;
-    default:
-      return `${stageLabel} pending`;
-  }
 };
 
 export function JobDashboard({ initialJobId }: JobDashboardProps) {
@@ -573,35 +485,63 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
     (path: string, size: "sm" | "md" = "md") => {
       const fileName = path.split("/").pop() ?? path;
       const chipClass =
-        "rounded-full bg-white/70 px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm";
+        "flex items-center gap-2 rounded-full bg-white/70 px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm";
+      const badgeClass =
+        "rounded-full bg-indigo-50 px-2 py-[2px] text-[10px] font-semibold uppercase tracking-[0.3em] text-indigo-500";
       const buttonClass =
         "rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-slate-600 shadow hover:bg-white";
+      const containerClass = size === "sm" ? "mt-2 space-y-2 pl-2" : "mt-3 space-y-3";
+      const hasMarkdown = fileName.toLowerCase().endsWith(".md");
+      const basePath = hasMarkdown ? path.replace(/\.[^/.]+$/, "") : path;
+      const variants = hasMarkdown
+        ? [
+            { label: "Markdown", display: fileName, artifactPath: path },
+            {
+              label: "PDF",
+              display: fileName.replace(/\.md$/i, ".pdf"),
+              artifactPath: `${basePath}.pdf`,
+            },
+            {
+              label: "Word",
+              display: fileName.replace(/\.md$/i, ".docx"),
+              artifactPath: `${basePath}.docx`,
+            },
+          ]
+        : [{ label: undefined, display: fileName, artifactPath: path }];
+
       return (
-        <div className={`flex flex-wrap items-center gap-2 ${size === "sm" ? "mt-2 pl-2" : "mt-3"}`}>
-          <span className={chipClass}>{fileName}</span>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className={buttonClass}
-              onClick={() => openArtifact(path)}
-            >
-              Open
-            </button>
-            <button
-              type="button"
-              className={buttonClass}
-              onClick={() => copyArtifactLink(path)}
-            >
-              Copy link
-            </button>
-            <button
-              type="button"
-              className={buttonClass}
-              onClick={() => downloadArtifactFile(path)}
-            >
-              Download
-            </button>
-          </div>
+        <div className={containerClass}>
+          {variants.map(({ label: variantLabel, display, artifactPath }) => (
+            <div key={`${artifactPath}-${variantLabel ?? "default"}`} className="flex flex-wrap items-center gap-2">
+              <span className={chipClass}>
+                {display}
+                {variantLabel ? <span className={badgeClass}>{variantLabel}</span> : null}
+              </span>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className={buttonClass}
+                  onClick={() => openArtifact(artifactPath)}
+                >
+                  Open
+                </button>
+                <button
+                  type="button"
+                  className={buttonClass}
+                  onClick={() => copyArtifactLink(artifactPath)}
+                >
+                  Copy link
+                </button>
+                <button
+                  type="button"
+                  className={buttonClass}
+                  onClick={() => downloadArtifactFile(artifactPath)}
+                >
+                  Download
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
       );
     },
@@ -625,24 +565,6 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
     };
     return getMetadataEntries(pseudoEvent);
   }, [status, getMetadataEntries]);
-
-  type StageCycleDetail = {
-    cycle: number;
-    status: StagePhase;
-    metadataEntries: Array<{ label: string; value: string }>;
-    timeline: Array<{ key: string; label: string; ts?: number | string | null }>;
-    completionTs?: number | string | null;
-    lastUpdateTs?: number | string | null;
-  };
-
-  type CombinedCycleDetail = {
-    cycle: number;
-    substeps: Array<{
-      stage: "REVIEW" | "VERIFY" | "REWRITE";
-      label: string;
-      detail: StageCycleDetail;
-    }>;
-  };
 
   const cycleDetailsByStage = useMemo<Map<string, StageCycleDetail[]>>(() => {
     const result = new Map<string, StageCycleDetail[]>();
@@ -773,6 +695,25 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
 
   const [expandedCycles, setExpandedCycles] = useState<Record<number, boolean>>({});
   const [expandedSubsteps, setExpandedSubsteps] = useState<Record<number, Record<string, boolean>>>({});
+  const [expandedSummaryStages, setExpandedSummaryStages] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    setExpandedSummaryStages((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      summaryEvents.forEach((event) => {
+        const base = normalizeStageName(event.stage);
+        if (!(base in next)) {
+          next[base] = event.status === "active";
+          changed = true;
+        } else if (event.status === "active" && !next[base]) {
+          next[base] = true;
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [summaryEvents]);
 
   useEffect(() => {
     setExpandedCycles((prev) => {
@@ -810,430 +751,39 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
   }, [combinedReviewCycles]);
 
   const renderSummaryStage = useCallback(
-    (event: TimelineEvent, index: number) => {
-      const status = event.status ?? (event.pending ? "pending" : "complete");
-      const completed = status === "complete";
-      const active = status === "active";
-      const label = event.displayStage ?? formatStage(event.stage);
-      const statusLabel = completed ? "Completed" : active ? "Running" : "Not started";
-      let secondaryText = statusLabel;
-      if ((completed || active) && event.ts != null) {
-        secondaryText = `${statusLabel} • ${formatTimestamp(event.ts)}`;
-      }
-      const badgeClass = completed
-        ? "bg-indigo-500 text-white"
-        : active
-        ? "border border-indigo-300 bg-indigo-50 text-indigo-600"
-        : "bg-white border border-slate-200 text-slate-400";
-      const stageBase = normalizeStageName(event.stage);
-      if (stageBase === "VERIFY" || stageBase === "REWRITE") {
-        return null;
-      }
-      const metadataEntries = getMetadataEntries(event);
-      if (stageBase === "REVIEW") {
-        const reviewCycles = combinedReviewCycles;
-        const stageCycleLabel = formatStage(stageBase);
-        const showCycles = reviewCycles.length > 0;
-        const totalCycles = reviewCycles.length;
-        const isSubstepComplete = (substep: CombinedCycleDetail["substeps"][number]) => {
-          if (substep.detail.status === "complete") {
-            return true;
-          }
-          if (
-            substep.stage === "REWRITE" &&
-            substep.detail.status === "queued" &&
-            substep.detail.timeline.length === 1 &&
-            substep.detail.timeline[0].label === "Not started"
-          ) {
-            return true;
-          }
-          return false;
-        };
-        const isCycleComplete = (cycleDetail: CombinedCycleDetail) =>
-          cycleDetail.substeps.every(isSubstepComplete);
-        const completedCycles = showCycles ? reviewCycles.filter(isCycleComplete).length : 0;
-        const runningCycleNumber = reviewCycles.find((cycleDetail) =>
-          cycleDetail.substeps.some((sub) => sub.detail.status === "in_progress")
-        )?.cycle;
-        const failedCycleNumber = reviewCycles.find((cycleDetail) =>
-          cycleDetail.substeps.some((sub) => sub.detail.status === "failed")
-        )?.cycle;
-        return (
-          <div
-            key={`summary-${event.stage}-${index}`}
-            className="flex items-start gap-4 rounded-2xl bg-white/70 px-4 py-3 shadow-sm"
-          >
-            <span
-              className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${badgeClass}`}
-            >
-              {index + 1}
-            </span>
-            <div className="flex-1 space-y-3">
-              <div>
-                <p className="text-sm font-semibold text-slate-700">
-                  {label}
-                </p>
-                <p className="text-xs text-slate-500">{secondaryText}</p>
-                {active && event.sourceStage && event.sourceStage !== event.stage ? (
-                  <p className="mt-1 text-xs text-slate-400">
-                    {formatStage(event.sourceStage)}
-                  </p>
-                ) : null}
-                {metadataEntries.length > 0 ? (
-                  <div className="mt-3 grid gap-x-6 gap-y-3 text-xs text-slate-500 sm:grid-cols-2">
-                    {metadataEntries.map(({ label: metaLabel, value }) => (
-                      <div key={`summary-${event.stage}-${metaLabel}`} className="flex flex-col">
-                        <span className="font-semibold text-slate-600">{metaLabel}</span>
-                        <span className="break-words">{value}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : event.message && (completed || active) ? (
-                  <p className="mt-1 text-xs text-slate-500">{event.message}</p>
-                ) : null}
-                {event.artifact && (completed || active)
-                  ? renderArtifactActions(event.artifact, "sm")
-                  : null}
-                {showCycles ? (
-                  <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                    <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600">
-                      {completedCycles}/{totalCycles} cycles complete
-                    </span>
-                    {runningCycleNumber ? (
-                      <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-indigo-600">
-                        Running cycle: {runningCycleNumber}
-                      </span>
-                    ) : null}
-                    {failedCycleNumber ? (
-                      <span className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-rose-700">
-                        Attention: Cycle {failedCycleNumber}
-                      </span>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-              {showCycles ? (
-                <div className="space-y-3">
-                  {reviewCycles.map((cycleDetail) => {
-                    const cycleStatus: StagePhase = cycleDetail.substeps.some(
-                      (sub) => sub.detail.status === "failed"
-                    )
-                      ? "failed"
-                      : cycleDetail.substeps.some((sub) => sub.detail.status === "in_progress")
-                      ? "in_progress"
-                      : isCycleComplete(cycleDetail)
-                      ? "complete"
-                      : "queued";
-                    const statusStyle = cycleStatusStyles[cycleStatus] ?? cycleStatusStyles.unknown;
-                    const statusChipLabel = cycleStatusLabel(cycleStatus, stageCycleLabel);
-                    const isExpanded = expandedCycles[cycleDetail.cycle] ?? false;
-                    return (
-                      <div
-                        key={`cycle-${cycleDetail.cycle}`}
-                        className={`rounded-2xl px-4 py-3 shadow-inner shadow-white/30 transition ${statusStyle.container}`}
-                      >
-                        <button
-                          type="button"
-                          className="flex w-full items-center justify-between text-left"
-                          onClick={() =>
-                            setExpandedCycles((prev) => ({
-                              ...prev,
-                              [cycleDetail.cycle]: !isExpanded,
-                            }))
-                          }
-                        >
-                          <div>
-                            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">
-                              {stageCycleLabel} cycle {cycleDetail.cycle}
-                            </p>
-                            {cycleDetail.substeps.some((sub) => sub.detail.completionTs) ? (
-                              <p className="text-xs text-slate-500">
-                                Completed{" "}
-                                {formatTimestamp(
-                                  cycleDetail.substeps
-                                    .map((sub) => sub.detail.completionTs)
-                                    .filter((ts): ts is number | string => ts != null)
-                                    .pop()
-                                )}
-                              </p>
-                            ) : cycleDetail.substeps.some((sub) => sub.detail.lastUpdateTs) ? (
-                              <p className="text-xs text-slate-500">
-                                Last update{" "}
-                                {formatTimestamp(
-                                  cycleDetail.substeps
-                                    .map((sub) => sub.detail.lastUpdateTs)
-                                    .filter((ts): ts is number | string => ts != null)
-                                    .pop()
-                                )}
-                              </p>
-                            ) : null}
-                          </div>
-                          <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusStyle.badge}`}>
-                            {statusChipLabel}
-                          </span>
-                          <span className="text-lg text-slate-500">{isExpanded ? "−" : "+"}</span>
-                        </button>
-                        {isExpanded && (
-                          <div className="mt-3 space-y-3 border-t border-slate-100 pt-3">
-                            {cycleDetail.substeps.map((substep) => {
-                              const subStatus = substep.detail.status;
-                              const subStatusStyle =
-                                cycleStatusStyles[subStatus] ?? cycleStatusStyles.unknown;
-                              const subStatusLabel = cycleStatusLabel(subStatus, substep.label);
-                              const isSubExpanded =
-                                expandedSubsteps[cycleDetail.cycle]?.[substep.stage] ?? false;
-                              return (
-                                <div
-                                  key={`cycle-${cycleDetail.cycle}-${substep.stage}`}
-                                  className="rounded-xl border border-slate-200 bg-white/90 px-4 py-3"
-                                >
-                                  <button
-                                    type="button"
-                                    className="flex w-full items-center justify-between text-left"
-                                    onClick={() =>
-                                      setExpandedSubsteps((prev) => {
-                                        const current = { ...(prev[cycleDetail.cycle] ?? {}) };
-                                        current[substep.stage] = !isSubExpanded;
-                                        return { ...prev, [cycleDetail.cycle]: current };
-                                      })
-                                    }
-                                  >
-                                    <div>
-                                      <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">
-                                        {substep.label}
-                                      </p>
-                                      {substep.detail.completionTs ? (
-                                        <p className="text-xs text-slate-500">
-                                          Completed {formatTimestamp(substep.detail.completionTs)}
-                                        </p>
-                                      ) : substep.detail.lastUpdateTs ? (
-                                        <p className="text-xs text-slate-500">
-                                          Last update {formatTimestamp(substep.detail.lastUpdateTs)}
-                                        </p>
-                                      ) : null}
-                                    </div>
-                                    <span
-                                      className={`rounded-full px-3 py-1 text-xs font-medium ${subStatusStyle.badge}`}
-                                    >
-                                      {subStatusLabel}
-                                    </span>
-                                    <span className="text-lg text-slate-500">
-                                      {isSubExpanded ? "−" : "+"}
-                                    </span>
-                                  </button>
-                                  {isSubExpanded && (
-                                    <div className="mt-3 space-y-3 border-t border-slate-100 pt-3">
-                                      {substep.detail.timeline.length > 0 ? (
-                                        <ol className="space-y-2 text-xs text-slate-500">
-                                          {substep.detail.timeline.map((item) => (
-                                            <li
-                                              key={item.key}
-                                              className="flex items-center justify-between gap-3"
-                                            >
-                                              <span className="font-semibold text-slate-600">
-                                                {item.label}
-                                              </span>
-                                              <span>{item.ts ? formatTimestamp(item.ts) : "—"}</span>
-                                            </li>
-                                          ))}
-                                        </ol>
-                                      ) : null}
-                                      {substep.detail.metadataEntries.length > 0 ? (
-                                        <div className="grid gap-x-6 gap-y-3 text-xs text-slate-500 sm:grid-cols-2">
-                                          {substep.detail.metadataEntries.map(({ label: metaLabel, value }) => (
-                                            <div
-                                              key={`cycle-${cycleDetail.cycle}-${substep.stage}-${metaLabel}`}
-                                              className="flex flex-col"
-                                            >
-                                              <span className="font-semibold text-slate-600">
-                                                {metaLabel}
-                                              </span>
-                                              <span className="break-words">{value}</span>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      ) : (
-                                        <p className="text-xs text-slate-500">No updates yet.</p>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </div>
-          </div>
-        );
-      }
-      const stageCycleDetails = cycleDetailsByStage.get(stageBase) ?? [];
-      const showCycles = stageCycleDetails.length > 0;
-      const stageCycleLabel = formatStage(stageBase);
-      const completedCycles = showCycles
-        ? stageCycleDetails.filter((detail) => detail.status === "complete").length
-        : 0;
-      const activeCycleDetail = showCycles
-        ? stageCycleDetails.find((detail) => detail.status === "in_progress")
-        : undefined;
-      const failedCycleDetail = showCycles
-        ? stageCycleDetails.find((detail) => detail.status === "failed")
-        : undefined;
-      const totalCycles = showCycles ? stageCycleDetails.length : 0;
-      return (
-        <div
-          key={`summary-${event.stage}-${index}`}
-          className="flex items-start gap-4 rounded-2xl bg-white/70 px-4 py-3 shadow-sm"
-        >
-          <span
-            className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${badgeClass}`}
-          >
-            {index + 1}
-          </span>
-          <div className="flex-1 space-y-3">
-            <div>
-              <p className="text-sm font-semibold text-slate-700">
-                {label}
-              </p>
-              <p className="text-xs text-slate-500">{secondaryText}</p>
-              {active && event.sourceStage && event.sourceStage !== event.stage ? (
-                <p className="mt-1 text-xs text-slate-400">
-                  {formatStage(event.sourceStage)}
-                </p>
-              ) : null}
-              {metadataEntries.length > 0 ? (
-                <div className="mt-3 grid gap-x-6 gap-y-3 text-xs text-slate-500 sm:grid-cols-2">
-                  {metadataEntries.map(({ label, value }) => (
-                    <div key={`summary-${event.stage}-${label}`} className="flex flex-col">
-                      <span className="font-semibold text-slate-600">{label}</span>
-                      <span className="break-words">{value}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : event.message && (completed || active) ? (
-                <p className="mt-1 text-xs text-slate-500">{event.message}</p>
-              ) : null}
-              {event.artifact && (completed || active)
-                ? renderArtifactActions(event.artifact, "sm")
-                : null}
-              {showCycles && totalCycles > 0 ? (
-                <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                  <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600">
-                    {completedCycles}/{totalCycles} cycles complete
-                  </span>
-                  {activeCycleDetail ? (
-                    <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-indigo-600">
-                      Running cycle: {activeCycleDetail.cycle}
-                    </span>
-                  ) : null}
-                  {failedCycleDetail ? (
-                    <span className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-rose-700">
-                      Attention: Cycle {failedCycleDetail.cycle}
-                    </span>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-            {showCycles ? (
-              <div className="space-y-3">
-                {stageCycleDetails.map((detail) => {
-                  const statusStyle = cycleStatusStyles[detail.status] ?? cycleStatusStyles.unknown;
-                  const statusChipLabel = cycleStatusLabel(detail.status, stageCycleLabel);
-                  const isExpanded = expandedCycles[detail.cycle] ?? false;
-                  return (
-                    <div
-                      key={`cycle-${detail.cycle}`}
-                      className={`rounded-2xl px-4 py-3 shadow-inner shadow-white/30 transition ${statusStyle.container}`}
-                    >
-                      <button
-                        type="button"
-                        className="flex w-full items-center justify-between text-left"
-                        onClick={() =>
-                          setExpandedCycles((prev) => ({
-                            ...prev,
-                            [detail.cycle]: !isExpanded,
-                          }))
-                        }
-                      >
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">
-                            {stageCycleLabel} cycle {detail.cycle}
-                          </p>
-                          {detail.completionTs ? (
-                            <p className="text-xs text-slate-500">
-                              Completed {formatTimestamp(detail.completionTs)}
-                            </p>
-                          ) : detail.lastUpdateTs ? (
-                            <p className="text-xs text-slate-500">
-                              Last update {formatTimestamp(detail.lastUpdateTs)}
-                            </p>
-                          ) : null}
-                        </div>
-                        <span
-                          className={`rounded-full px-3 py-1 text-xs font-medium ${statusStyle.badge}`}
-                        >
-                          {statusChipLabel}
-                        </span>
-                        <span className="text-lg text-slate-500">
-                          {isExpanded ? "−" : "+"}
-                        </span>
-                      </button>
-                      {isExpanded && (
-                        <div className="mt-3 space-y-3 border-t border-slate-100 pt-3">
-                          {detail.timeline.length > 0 ? (
-                            <ol className="space-y-2 text-xs text-slate-500">
-                              {detail.timeline.map((item) => (
-                                <li
-                                  key={item.key}
-                                  className="flex items-center justify-between gap-3"
-                                >
-                                  <span className="font-semibold text-slate-600">
-                                    {item.label}
-                                  </span>
-                                  <span>{item.ts ? formatTimestamp(item.ts) : "—"}</span>
-                                </li>
-                              ))}
-                            </ol>
-                          ) : null}
-                          {detail.metadataEntries.length > 0 ? (
-                            <div className="grid gap-x-6 gap-y-3 text-xs text-slate-500 sm:grid-cols-2">
-                              {detail.metadataEntries.map(({ label, value }) => (
-                                <div
-                                  key={`cycle-${detail.cycle}-${label}`}
-                                  className="flex flex-col"
-                                >
-                                  <span className="font-semibold text-slate-600">{label}</span>
-                                  <span className="break-words">{value}</span>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="text-xs text-slate-500">No updates yet.</p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : null}
-          </div>
-        </div>
-      );
-    },
+    (stageEvent: TimelineEvent, index: number) => (
+      <TimelineStageCard
+        key={`summary-${stageEvent.stage}-${index}`}
+        event={stageEvent}
+        index={index}
+        stageBase={normalizeStageName(stageEvent.stage)}
+        formatStage={formatStage}
+        formatTimestamp={formatTimestamp}
+        getMetadataEntries={getMetadataEntries}
+        renderArtifactActions={renderArtifactActions}
+        combinedReviewCycles={combinedReviewCycles}
+        cycleDetailsByStage={cycleDetailsByStage}
+        expandedSummaryStages={expandedSummaryStages}
+        setExpandedSummaryStages={setExpandedSummaryStages}
+        expandedCycles={expandedCycles}
+        setExpandedCycles={setExpandedCycles}
+        expandedSubsteps={expandedSubsteps}
+        setExpandedSubsteps={setExpandedSubsteps}
+      />
+    ),
     [
       combinedReviewCycles,
       cycleDetailsByStage,
       expandedCycles,
       expandedSubsteps,
+      expandedSummaryStages,
       formatStage,
       formatTimestamp,
       getMetadataEntries,
       renderArtifactActions,
+      setExpandedCycles,
+      setExpandedSubsteps,
+      setExpandedSummaryStages,
     ]
   );
 
@@ -1349,65 +899,24 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
               className="bg-gradient-to-r from-purple-400 via-pink-300 to-sky-400 text-transparent"
               subtitleClassName="text-slate-500"
             />
-            <div className="grid gap-6 md:grid-cols-2">
-              <div className="rounded-3xl border border-white/70 bg-white px-6 py-5 shadow-lg shadow-slate-200/50">
-                <p className="text-xs uppercase tracking-[0.38em] text-slate-400">Job ID</p>
-                <p className="mt-3 break-all font-mono text-sm text-slate-700">{jobId}</p>
-              </div>
-              <div className="rounded-3xl border border-white/70 bg-white px-6 py-5 shadow-lg shadow-slate-200/50">
-                <p className="text-xs uppercase tracking-[0.38em] text-slate-400">Current stage</p>
-                <p className="mt-3 text-xl font-semibold text-slate-800">
-                  {status?.stage ?? "Pending"}
-                </p>
-                {status?.cycle && (
-                  <p className="text-sm text-slate-600">Cycle {status.cycle}</p>
-                )}
-              </div>
-            </div>
-            <div className="space-y-4">
-              {statusMetadata.length > 0 ? (
-                <div className="grid gap-x-6 gap-y-3 text-xs text-slate-500 sm:grid-cols-2">
-                  {statusMetadata.map(({ label, value }) => (
-                    <div key={`status-${label}`} className="flex flex-col">
-                      <span className="font-semibold text-slate-600">{label}</span>
-                      <span className="break-words">{value}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : status?.message ? (
-                <p className="text-sm text-slate-500">{status.message}</p>
-              ) : (
-                <p className="text-sm text-slate-500">
-                  Waiting for the first worker update...
-                </p>
+            <JobQuickLinks
+              jobId={jobId}
+              statusStage={
+                status?.stage ? formatStage(normalizeStageName(status.stage)) : null
+              }
+              statusCycle={status?.cycle ?? null}
+              metadata={statusMetadata}
+              statusMessage={status?.message ?? null}
+              artifactActions={artifactActions}
+              artifactNotice={artifactNotice}
+            />
+            <TimelineCard
+              totalEvents={sortedTimeline.length}
+              renderedStages={summaryEventsToRender.map((timelineEvent, idx) =>
+                renderSummaryStage(timelineEvent, idx)
               )}
-              {artifactActions}
-              {artifactNotice && (
-                <p className="text-xs text-slate-500">{artifactNotice}</p>
-              )}
-            </div>
-            <div className="rounded-3xl border border-white/70 bg-white/80 px-6 py-6 shadow-inner shadow-white/30">
-              <div className="flex items-center justify-between">
-                <p className="text-xs uppercase tracking-[0.38em] text-slate-400">
-                  Timeline
-                </p>
-                <span className="text-xs text-slate-500">
-                  {sortedTimeline.length} events
-                </span>
-              </div>
-              <div className="mt-4 space-y-4">
-                <div className="space-y-3">
-                  {summaryEventsToRender.map((event, idx) =>
-                    renderSummaryStage(event, idx)
-                  )}
-                </div>
-                {summaryEvents.every((event) => event.pending) && (
-                  <p className="text-sm text-slate-500">
-                    Timeline updates will appear here as the pipeline progresses.
-                  </p>
-                )}
-              </div>
-            </div>
+              showPendingMessage={summaryEvents.every((timelineEvent) => timelineEvent.pending)}
+            />
           </GlassCard>
         </div>
       )}
