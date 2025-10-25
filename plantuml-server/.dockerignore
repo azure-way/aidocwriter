@@ -1,0 +1,6 @@
+# Ignore everything by default to keep image lean
+*
+
+# Allow Dockerfile and scripts
+!Dockerfile
+!README.md

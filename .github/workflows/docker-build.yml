@@ -35,6 +35,10 @@ jobs:
             image_name: docwriter-finalize
           - dockerfile: src/functions_status/Dockerfile
             image_name: docwriter-status
+          - dockerfile: src/functions_diagram_render/Dockerfile
+            image_name: docwriter-diagram-render
+          - dockerfile: plantuml-server/Dockerfile
+            image_name: plantuml-server
 
     steps:
       - name: Checkout

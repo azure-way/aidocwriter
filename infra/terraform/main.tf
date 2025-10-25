@@ -178,6 +178,7 @@ module "app" {
     rewrite       = "${module.container_registry.url}/docwriter-rewrite:${var.docker_image_version}"
     finalize      = "${module.container_registry.url}/docwriter-finalize:${var.docker_image_version}"
     status        = "${module.container_registry.url}/docwriter-status:${var.docker_image_version}"
+    plantuml      = "${module.container_registry.url}/plantuml-server:${var.docker_image_version}"
   }
   functions_env = {
     OPENAI_BASE_URL                 = var.openai_base_url

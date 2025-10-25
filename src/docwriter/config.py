@@ -65,6 +65,8 @@ class Settings:
     sb_queue_verify: str = "docwriter-verify"
     sb_queue_rewrite: str = "docwriter-rewrite"
     sb_queue_finalize: str = "docwriter-finalize"
+    sb_queue_diagram_render: str = "docwriter-diagram-render"
+    sb_queue_diagram_results: str = "docwriter-diagram-results"
     sb_topic_status: str = os.getenv("DOCWRITER_DEFAULT_STATUS_TOPIC", "aidocwriter-status")
     sb_status_subscription: str = "console"
     sb_lock_renew_s: float = 900.0
@@ -107,6 +109,8 @@ class Settings:
             sb_queue_verify=env.get("SERVICE_BUS_QUEUE_VERIFY", cls.sb_queue_verify),
             sb_queue_rewrite=env.get("SERVICE_BUS_QUEUE_REWRITE", cls.sb_queue_rewrite),
             sb_queue_finalize=env.get("SERVICE_BUS_QUEUE_FINALIZE", cls.sb_queue_finalize),
+            sb_queue_diagram_render=env.get("SERVICE_BUS_QUEUE_DIAGRAM_RENDER", cls.sb_queue_diagram_render),
+            sb_queue_diagram_results=env.get("SERVICE_BUS_QUEUE_DIAGRAM_RESULTS", cls.sb_queue_diagram_results),
             sb_topic_status=env.get("SERVICE_BUS_TOPIC_STATUS", cls.sb_topic_status),
             sb_status_subscription=env.get("SERVICE_BUS_STATUS_SUBSCRIPTION", cls.sb_status_subscription),
             sb_lock_renew_s=_coerce_float(env.get("SERVICE_BUS_LOCK_RENEW_S"), cls.sb_lock_renew_s),
