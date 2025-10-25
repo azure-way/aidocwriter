@@ -150,6 +150,6 @@ output "container_apps_environment_name" {
   value = azurerm_container_app_environment.main.name
 }
 
-output "api_url" {
-  value = azurerm_container_app.api.ingress[0].fqdn
+output "api_urls" {
+  value = [for api in azurerm_container_app.api : api.ingress[0].fqdn]
 }
