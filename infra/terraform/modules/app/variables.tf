@@ -31,6 +31,12 @@ variable "api_env" {
   default = {}
 }
 
+variable "api_ports" {
+  type    = map(number)
+  default = {}
+  
+}
+
 variable "functions_env" {
   type    = map(string)
   default = {}

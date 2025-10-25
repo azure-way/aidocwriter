@@ -34,7 +34,10 @@ def _render_with_plantuml(source: str, fmt: str) -> bytes:
     server_url = os.getenv("CONTAINER_APP_HOSTNAME")
     if not server_url:
         raise DiagramRenderError("CONTAINER_APP_HOSTNAME not configured")
-    url = f"{server_url.rstrip('/')}/plantuml/{fmt}"
+    
+    app_name = os.getenv("PLANTUML_SERVER_APP_NAME", "aidocwriter-plantuml")
+
+    url = f"https://{app_name}.{server_url}/plantuml/{fmt}"
     try:
         resp = requests.post(
             url,

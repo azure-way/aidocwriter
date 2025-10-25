@@ -60,7 +60,7 @@ resource "azurerm_container_app" "api" {
   ingress {
     allow_insecure_connections = false
     external_enabled           = true
-    target_port                = 8000
+    target_port                = var.api_ports[each.key]
 
     traffic_weight {
       percentage      = 100

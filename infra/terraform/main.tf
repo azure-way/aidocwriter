@@ -156,6 +156,12 @@ module "app" {
     api      = "${module.container_registry.url}/docwriter-api:${var.docker_image_version}"
     plantuml = "${module.container_registry.url}/plantuml-server:${var.docker_image_version}"
   }
+
+  api_ports = {
+    api      = 80
+    plantuml = 8080
+  }
+
   api_env = {
     OPENAI_BASE_URL                 = var.openai_base_url
     OPENAI_API_VERSION              = var.openai_api_version
@@ -170,6 +176,7 @@ module "app" {
     SERVICE_BUS_TOPIC_STATUS        = module.service_bus.topic_name
     SERVICE_BUS_STATUS_SUBSCRIPTION = "status-writer"
     AZURE_BLOB_CONTAINER            = "docwriter"
+    PLANTUML_SERVER_APP_NAME        = "aidocwriter-plantuml"
   }
   functions_images = {
     plan-intake   = "${module.container_registry.url}/docwriter-plan-intake:${var.docker_image_version}"
