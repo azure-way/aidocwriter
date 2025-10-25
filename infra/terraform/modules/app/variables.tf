@@ -18,8 +18,8 @@ variable "container_registry_login" {
   type = string
 }
 
-variable "api_image" {
-  type = string
+variable "api_images" {
+  type = map(string)
 }
 
 variable "functions_images" {

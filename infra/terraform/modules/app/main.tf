@@ -14,7 +14,9 @@ resource "azurerm_container_app_environment" "main" {
 }
 
 resource "azurerm_container_app" "api" {
-  name                         = "${var.name_prefix}-api"
+  for_each = var.api_images
+
+  name                         = "${var.name_prefix}-${each.key}"
   resource_group_name          = var.resource_group_name
   container_app_environment_id = azurerm_container_app_environment.main.id
   revision_mode                = "Single"
@@ -32,8 +34,8 @@ resource "azurerm_container_app" "api" {
 
   template {
     container {
-      name   = "api"
-      image  = var.api_image
+      name   = each.key
+      image  = each.value
       cpu    = 0.5
       memory = "1Gi"
 

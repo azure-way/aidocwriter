@@ -152,7 +152,10 @@ module "app" {
   managed_identity_id      = azurerm_user_assigned_identity.ca_identity.id
   container_registry_login = module.container_registry.url
   tags                     = var.tags
-  api_image                = "${module.container_registry.url}/docwriter-api:${var.docker_image_version}"
+  api_images               = {
+    api      = "${module.container_registry.url}/docwriter-api:${var.docker_image_version}"
+    plantuml = "${module.container_registry.url}/plantuml-server:${var.docker_image_version}"
+  }
   api_env = {
     OPENAI_BASE_URL                 = var.openai_base_url
     OPENAI_API_VERSION              = var.openai_api_version
@@ -178,7 +181,6 @@ module "app" {
     rewrite       = "${module.container_registry.url}/docwriter-rewrite:${var.docker_image_version}"
     finalize      = "${module.container_registry.url}/docwriter-finalize:${var.docker_image_version}"
     status        = "${module.container_registry.url}/docwriter-status:${var.docker_image_version}"
-    plantuml      = "${module.container_registry.url}/plantuml-server:${var.docker_image_version}"
   }
   functions_env = {
     OPENAI_BASE_URL                 = var.openai_base_url
