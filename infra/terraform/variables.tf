@@ -35,7 +35,8 @@ variable "service_bus_queues" {
     "docwriter-review",
     "docwriter-verify",
     "docwriter-rewrite",
-    "docwriter-finalize"
+    "docwriter-finalize",
+    "docwriter-diagram-render"
   ]
 }
 
