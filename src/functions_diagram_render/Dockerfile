@@ -4,6 +4,10 @@ ENV AzureWebJobsScriptRoot=/home/site/wwwroot \
     AzureFunctionsJobHost__Logging__Console__IsEnabled=true \
     PYTHONUNBUFFERED=1
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends graphviz \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /workspace
 COPY pyproject.toml README.md /workspace/
 COPY src/docwriter /workspace/src/docwriter

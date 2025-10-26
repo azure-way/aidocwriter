@@ -5,14 +5,16 @@ import os
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
-try:
-    import requests  # type: ignore
-except Exception:  # pragma: no cover
-    requests = None  # type: ignore
-
 from .config import get_settings
 from .messaging import send_queue_message
 from .storage import BlobStore
+
+try:
+    from plantweb.render import render as plantweb_render  # type: ignore
+    from plantweb.errors import PlantwebError  # type: ignore
+except Exception:  # pragma: no cover
+    plantweb_render = None  # type: ignore
+    PlantwebError = RuntimeError  # type: ignore
 
 
 class DiagramRenderError(RuntimeError):
@@ -29,26 +31,32 @@ def _normalize_format(fmt: Optional[str]) -> str:
 
 
 def _render_with_plantuml(source: str, fmt: str) -> bytes:
-    if requests is None:
-        raise DiagramRenderError("requests package not available in runtime")
-    server_url = os.getenv("CONTAINER_APP_ENVIRONMENT_DOMAIN")
-    if not server_url:
-        raise DiagramRenderError("CONTAINER_APP_ENVIRONMENT_DOMAIN not configured")
-    
-    app_name = os.getenv("PLANTUML_SERVER_APP_NAME", "aidocwriter-plantuml")
-
-    url = f"https://{app_name}.{server_url}/plantuml/{fmt}"
+    if plantweb_render is None:
+        raise DiagramRenderError("plantweb package not available in runtime")
     try:
-        resp = requests.post(
-            url,
-            data=source.encode("utf-8"),
-            headers={"Content-Type": "text/plain"},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        return resp.content
-    except Exception as exc:
+        server_url = os.getenv("CONTAINER_APP_ENVIRONMENT_DOMAIN")
+        if not server_url:
+            raise DiagramRenderError("CONTAINER_APP_ENVIRONMENT_DOMAIN not configured")
+        
+        app_name = os.getenv("PLANTUML_SERVER_APP_NAME", "aidocwriter-plantuml")
+
+        server_url = f"https://{app_name}.{server_url}/plantuml"
+
+        kwargs: Dict[str, Any] = {"engine": "plantuml", "format": fmt}
+        if server_url:
+            kwargs["server"] = server_url.rstrip("/")
+        rendered = plantweb_render(source, **kwargs)
+        if isinstance(rendered, tuple):
+            content = rendered[0]
+        else:
+            content = rendered
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+        return content
+    except PlantwebError as exc:  # type: ignore[arg-type]
         raise DiagramRenderError(f"PlantUML rendering failed: {exc}") from exc
+    except Exception as exc:  # pragma: no cover - defensive
+        raise DiagramRenderError(f"unexpected rendering error: {exc}") from exc
 
 
 def process_diagram_render(data: Dict[str, Any]) -> None:
