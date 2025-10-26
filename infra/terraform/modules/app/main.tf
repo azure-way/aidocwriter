@@ -39,6 +39,11 @@ resource "azurerm_container_app" "api" {
       cpu    = 0.5
       memory = "1Gi"
 
+      env { 
+        name = "CONTAINER_APP_ENVIRONMENT_DOMAIN"
+        value = azurerm_container_app_environment.main.default_domain
+      }
+
       dynamic "env" {
         for_each = var.api_env
         content {
@@ -125,6 +130,11 @@ resource "azurerm_container_app" "functions" {
       env {
         name  = "WEBSITE_RUN_FROM_PACKAGE"
         value = "0"
+      }
+
+      env { 
+        name = "CONTAINER_APP_ENVIRONMENT_DOMAIN"
+        value = azurerm_container_app_environment.main.default_domain
       }
 
       dynamic "env" {

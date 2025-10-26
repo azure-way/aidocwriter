@@ -31,9 +31,9 @@ def _normalize_format(fmt: Optional[str]) -> str:
 def _render_with_plantuml(source: str, fmt: str) -> bytes:
     if requests is None:
         raise DiagramRenderError("requests package not available in runtime")
-    server_url = os.getenv("CONTAINER_APP_HOSTNAME")
+    server_url = os.getenv("CONTAINER_APP_ENVIRONMENT_DOMAIN")
     if not server_url:
-        raise DiagramRenderError("CONTAINER_APP_HOSTNAME not configured")
+        raise DiagramRenderError("CONTAINER_APP_ENVIRONMENT_DOMAIN not configured")
     
     app_name = os.getenv("PLANTUML_SERVER_APP_NAME", "aidocwriter-plantuml")
 
