@@ -40,7 +40,7 @@ def _render_with_plantuml(source: str, fmt: str) -> bytes:
         
         app_name = os.getenv("PLANTUML_SERVER_APP_NAME", "aidocwriter-plantuml")
 
-        server_url = f"https://{app_name}.{server_url}/plantuml"
+        server_url = f"https://{app_name}.{server_url}"
 
         kwargs: Dict[str, Any] = {"engine": "plantuml", "format": fmt}
         if server_url:
