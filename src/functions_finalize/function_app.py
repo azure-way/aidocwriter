@@ -11,7 +11,7 @@ app = func.FunctionApp()
 @app.function_name(name="finalize_trigger")
 @app.service_bus_queue_trigger(
     arg_name="msg",
-    queue_name="%SERVICE_BUS_QUEUE_FINALIZE%",
+    queue_name="%SERVICE_BUS_QUEUE_FINALIZE_READY%",
     connection="SERVICE_BUS_CONNECTION_STRING",
 )
 def finalize_trigger(msg: func.ServiceBusMessage) -> None:

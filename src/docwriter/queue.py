@@ -23,6 +23,7 @@ from .agents.summary_reviewer import SummaryReviewerAgent
 from .messaging import send_queue_message, service_bus, publish_stage_event as messaging_publish_stage_event, publish_status as messaging_publish_status
 from .workers import configure_logging as worker_configure_logging, run_processor as worker_run_processor
 from .stages import core as stages_core
+from .stages.diagram_prep import process_diagram_prep
 from .models import StatusEvent
 
 
@@ -230,6 +231,16 @@ def worker_rewrite() -> None:
     worker_run_processor(settings.sb_queue_rewrite, handle, stage_name="REWRITE")
 
 
+def worker_diagram_prep() -> None:
+    worker_configure_logging("worker-diagram-prep")
+    settings = _sb_check()
+
+    def handle(_msg, data: Dict[str, Any]):
+        process_diagram_prep(data)
+
+    worker_run_processor(settings.sb_queue_diagram_prep, handle, stage_name="DIAGRAM")
+
+
 def worker_finalize() -> None:
     worker_configure_logging("worker-finalize")
     settings = _sb_check()
@@ -237,7 +248,7 @@ def worker_finalize() -> None:
     def handle(_msg, data: Dict[str, Any]):
         process_finalize(data)
 
-    worker_run_processor(settings.sb_queue_finalize, handle, stage_name="FINALIZE")
+    worker_run_processor(settings.sb_queue_finalize_ready, handle, stage_name="FINALIZE")
 
 
 # Exposed per-stage processors for E2E tests and direct invocation

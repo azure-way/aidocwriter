@@ -37,6 +37,8 @@ jobs:
             image_name: docwriter-status
           - dockerfile: src/functions_diagram_render/Dockerfile
             image_name: docwriter-diagram-render
+          - dockerfile: src/functions_diagram_prep/Dockerfile
+            image_name: docwriter-diagram-prep
           - dockerfile: plantuml-server/Dockerfile
             image_name: plantuml-server
 

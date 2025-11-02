@@ -8,6 +8,7 @@ from .core import (
     process_rewrite,
     process_finalize,
 )
+from .diagram_prep import process_diagram_prep
 
 __all__ = [
     "process_plan_intake",
@@ -18,4 +19,5 @@ __all__ = [
     "process_verify",
     "process_rewrite",
     "process_finalize",
+    "process_diagram_prep",
 ]

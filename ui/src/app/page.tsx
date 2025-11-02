@@ -56,6 +56,7 @@ const SUMMARY_STAGE_ORDER = [
   "REVIEW",
   "VERIFY",
   "REWRITE",
+  "DIAGRAM",
   "FINALIZE",
 ];
 

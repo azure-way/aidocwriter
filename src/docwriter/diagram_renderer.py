@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from .config import get_settings
-from .messaging import send_queue_message
+from .messaging import publish_stage_event, send_queue_message
 from .storage import BlobStore
 
 
@@ -26,19 +26,12 @@ def _normalize_format(fmt: Optional[str]) -> str:
 def _render_with_plantuml(source: str, fmt: str) -> bytes:
     import requests
 
-    domain  = os.getenv("CONTAINER_APP_ENVIRONMENT_DOMAIN")
-    if not domain:
-        raise DiagramRenderError("CONTAINER_APP_ENVIRONMENT_DOMAIN not configured")
-    
-    app_server_url = os.getenv("PLANTUML_SERVER_APP_NAME")
-    if not app_server_url:
-        raise DiagramRenderError("PLANTUML_SERVER_APP_NAME not configured")
-
-    logging.debug("Using PlantUML server at %s.%s", app_server_url, domain)
-    server_url = f"https://{app_server_url}.{domain}"
+    server_url = os.getenv("PLANTUML_SERVER_URL")
+    if not server_url:
+        raise DiagramRenderError("PLANTUML_SERVER_URL not configured")
 
     normalized = server_url.rstrip("/")
-    endpoint = f"{normalized}/{fmt}"
+    endpoint = f"{normalized}/plantuml/{fmt}"
 
     try:
         response = requests.post(
@@ -57,69 +50,94 @@ def process_diagram_render(data: Dict[str, Any]) -> None:
     """
     Render a PlantUML diagram request.
 
-    Expected payload:
+    Expected payload examples:
+
+    Batch request:
     {
         "job_id": "...",
-        "diagram_id": "...",           # optional
-        "source": "...",               # PlantUML source text
-        "format": "png" | "svg",       # optional (default png)
-        "blob_path": "...",            # optional target blob path
-        "result_queue": "...",         # optional queue to send completion payload
-        "metadata": {...}              # optional passthrough data
+        "diagram_requests": [
+            {
+                "diagram_id": "diagram_1",
+                "source": "@startuml ... @enduml",
+                "format": "png",
+                "code_block": "```plantuml ...```",
+                "blob_path": "jobs/<job>/images/diagram_1.png"
+            },
+            ...
+        ],
+        "finalize_payload": { ... }
+    }
+
+    Single request (debugging/CLI):
+    {
+        "job_id": "...",
+        "diagram_id": "diagram_1",
+        "source": "@startuml ... @enduml",
+        "format": "png",
+        "blob_path": "jobs/<job>/images/diagram_1.png"
     }
     """
 
+    settings = get_settings()
     job_id = data.get("job_id")
+    if not job_id:
+        raise DiagramRenderError("diagram render payload missing job_id")
+
+    if "diagram_requests" in data:
+        finalize_payload = data.get("finalize_payload") or {}
+        requests = data.get("diagram_requests", [])
+        if not isinstance(requests, list):
+            raise DiagramRenderError("diagram_requests payload must be a list")
+        try:
+            store = BlobStore()
+            results: List[Dict[str, Any]] = []
+            for request in requests:
+                diag_id = request.get("diagram_id") or str(uuid4())
+                fmt = _normalize_format(request.get("format"))
+                blob_path = request.get("blob_path") or f"jobs/{job_id}/images/{diag_id}.{fmt}"
+                source_text = request.get("source")
+                if not source_text:
+                    raise DiagramRenderError(f"diagram {diag_id} missing source")
+                content = _render_with_plantuml(source_text, fmt)
+                store.put_bytes(blob=blob_path, data_bytes=content)
+                relative_path = blob_path
+                prefix = f"jobs/{job_id}/"
+                if blob_path.startswith(prefix):
+                    relative_path = blob_path[len(prefix) :]
+                results.append(
+                    {
+                        "diagram_id": diag_id,
+                        "blob_path": blob_path,
+                        "relative_path": relative_path,
+                        "code_block": request.get("code_block"),
+                        "format": fmt,
+                    }
+                )
+            payload = {**finalize_payload, "diagram_results": results}
+            payload.setdefault("job_id", job_id)
+            send_queue_message(settings.sb_queue_finalize_ready, payload)
+            publish_stage_event("DIAGRAM", "DONE", payload)
+            publish_stage_event("FINALIZE", "QUEUED", payload)
+        except DiagramRenderError:
+            raise
+        except Exception as exc:  # pragma: no cover - defensive
+            raise DiagramRenderError(f"unexpected rendering error: {exc}") from exc
+        return
+
     source = data.get("source") or data.get("diagram_source")
-    if not job_id or not source:
-        raise DiagramRenderError("diagram render payload missing job_id or source")
+    if not source:
+        raise DiagramRenderError("diagram render payload missing source")
 
     diagram_id = data.get("diagram_id") or str(uuid4())
     fmt = _normalize_format(data.get("format"))
-    result_queue = data.get("result_queue") or get_settings().sb_queue_diagram_results
 
-    def _publish(payload: Dict[str, Any]) -> None:
-        if not result_queue:
-            return
-        try:
-            send_queue_message(result_queue, payload)
-        except Exception:
-            logging.exception("Failed to publish diagram render result for job %s", job_id)
+    if not source:
+        raise DiagramRenderError("diagram render payload missing source")
 
     try:
-        image_bytes = _render_with_plantuml(source, fmt)
+        content = _render_with_plantuml(source, fmt)
         blob_path = data.get("blob_path") or f"jobs/{job_id}/images/{diagram_id}.{fmt}"
         store = BlobStore()
-        store.put_bytes(blob=blob_path, data_bytes=image_bytes)
-        result_payload: Dict[str, Any] = {
-            "job_id": job_id,
-            "diagram_id": diagram_id,
-            "blob_path": blob_path,
-            "format": fmt,
-            "status": "completed",
-        }
-        if "metadata" in data:
-            result_payload["metadata"] = data["metadata"]
-        _publish(result_payload)
-    except DiagramRenderError as exc:
-        failure = {
-            "job_id": job_id,
-            "diagram_id": diagram_id,
-            "status": "failed",
-            "error": str(exc),
-        }
-        if "metadata" in data:
-            failure["metadata"] = data["metadata"]
-        _publish(failure)
-        raise
+        store.put_bytes(blob=blob_path, data_bytes=content)
     except Exception as exc:  # pragma: no cover - defensive
-        failure = {
-            "job_id": job_id,
-            "diagram_id": diagram_id,
-            "status": "failed",
-            "error": str(exc),
-        }
-        if "metadata" in data:
-            failure["metadata"] = data["metadata"]
-        _publish(failure)
         raise DiagramRenderError(f"unexpected rendering error: {exc}") from exc

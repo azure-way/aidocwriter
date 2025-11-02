@@ -1,9 +1,10 @@
 DocWriter v3 — AI Document Writer
 
 Overview
-- Generates long, consistent Markdown documents (>60 pages) with Mermaid diagrams.
+- Generates long, consistent Markdown documents (>60 pages) with Mermaid and PlantUML diagrams rendered into PNG/SVG.
 - Agentic pipeline: Planner (o3), Writer (gpt-4.1), Reviewer set (o3: general + style + cohesion + executive summary).
 - Queue-driven architecture on Azure Service Bus; artifacts stored in Azure Blob Storage.
+- Dedicated diagram-prep/render stages ensure graphics exist before finalize/PDF/DOCX export.
 - REST-first workflow: jobs are created and monitored via FastAPI; Azure Functions host each worker stage.
 - Interactive intake: collects detailed requirements before planning for higher quality output.
 
@@ -29,12 +30,15 @@ Quick Start
      export SERVICE_BUS_QUEUE_WRITE=docwriter-write
      export SERVICE_BUS_QUEUE_REVIEW=docwriter-review
      export SERVICE_BUS_QUEUE_VERIFY=docwriter-verify
-     export SERVICE_BUS_QUEUE_REWRITE=docwriter-rewrite
-     export SERVICE_BUS_QUEUE_FINALIZE=docwriter-finalize
+    export SERVICE_BUS_QUEUE_REWRITE=docwriter-rewrite
+    export SERVICE_BUS_QUEUE_DIAGRAM_PREP=docwriter-diagram-prep
+    export SERVICE_BUS_QUEUE_DIAGRAM_RENDER=docwriter-diagram-render
+    export SERVICE_BUS_QUEUE_FINALIZE_READY=docwriter-finalize-ready
      export SERVICE_BUS_TOPIC_STATUS=docwriter-status
      export SERVICE_BUS_STATUS_SUBSCRIPTION=status-writer
      export AZURE_STORAGE_CONNECTION_STRING=...
-     export AZURE_BLOB_CONTAINER=docwriter
+    export AZURE_BLOB_CONTAINER=docwriter
+    export PLANTUML_SERVER_URL=https://plantuml.example.com
      export APPINSIGHTS_INSTRUMENTATION_KEY=... # optional, enables Application Insights telemetry
      ```
    - Optional overrides: `DOCWRITER_PLANNER_MODEL`, `DOCWRITER_WRITER_MODEL`, `DOCWRITER_STREAM`, etc. See `src/docwriter/config.py` for the full list.
@@ -154,18 +158,10 @@ config/
 ```
 Documentation and deployment scripts will be updated as those components land.
 
-Mermaid Diagrams
-- The writer embeds diagrams using fenced code blocks:
-  ```
-  ```mermaid
-  graph TD
-  A[User] --> B[CLI]
-  B --> C[Planner]
-  C --> D[Writer]
-  D --> E[Reviewer]
-  ```
-  ```
-- Many editors render Mermaid directly. For static exports, use tools like `mermaid-cli`.
+Diagrams
+- The plan/review stages emit PlantUML blocks (` ```plantuml` or `@startuml…@enduml`).
+- Diagram-prep extracts these blocks and the diagram-render worker calls your PlantUML server (`PLANTUML_SERVER_URL`), storing PNG/SVG files under `jobs/<job_id>/images/`.
+- Finalize swaps the original blocks with image links so PDF/DOCX exports embed the rendered graphics.
 
 Consistency Strategy
 - Global memory: style guide, glossary, decisions, and facts shared across sections.
@@ -224,13 +220,16 @@ Use these steps to reconstruct the environment in a fresh session:
    export SERVICE_BUS_QUEUE_WRITE=docwriter-write
    export SERVICE_BUS_QUEUE_REVIEW=docwriter-review
    export SERVICE_BUS_QUEUE_VERIFY=docwriter-verify
-   export SERVICE_BUS_QUEUE_REWRITE=docwriter-rewrite
-   export SERVICE_BUS_QUEUE_FINALIZE=docwriter-finalize
+  export SERVICE_BUS_QUEUE_REWRITE=docwriter-rewrite
+  export SERVICE_BUS_QUEUE_DIAGRAM_PREP=docwriter-diagram-prep
+  export SERVICE_BUS_QUEUE_DIAGRAM_RENDER=docwriter-diagram-render
+  export SERVICE_BUS_QUEUE_FINALIZE_READY=docwriter-finalize-ready
    export SERVICE_BUS_TOPIC_STATUS=docwriter-status
-   export SERVICE_BUS_STATUS_SUBSCRIPTION=console
-   export AZURE_STORAGE_CONNECTION_STRING=...
-   export AZURE_BLOB_CONTAINER=docwriter
-   export APPINSIGHTS_INSTRUMENTATION_KEY=...
+  export SERVICE_BUS_STATUS_SUBSCRIPTION=console
+  export AZURE_STORAGE_CONNECTION_STRING=...
+  export AZURE_BLOB_CONTAINER=docwriter
+  export PLANTUML_SERVER_URL=https://plantuml.example.com
+  export APPINSIGHTS_INSTRUMENTATION_KEY=...
    export NEXT_PUBLIC_API_BASE_URL=https://<api-fqdn>
    ```
 

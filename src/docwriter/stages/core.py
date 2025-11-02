@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any, Dict, Optional, Mapping
+from typing import Any, Dict, Optional, Mapping, List
 
 from docwriter.agents.cohesion_reviewer import CohesionReviewerAgent
 from docwriter.agents.interviewer import InterviewerAgent
@@ -13,7 +13,7 @@ from docwriter.agents.style_reviewer import StyleReviewerAgent
 from docwriter.agents.summary_reviewer import SummaryReviewerAgent
 from docwriter.agents.verifier import VerifierAgent
 from docwriter.agents.writer import WriterAgent
-from docwriter.artifacts import export_docx, export_pdf, replace_mermaid_with_images
+from docwriter.artifacts import export_docx, export_pdf
 from docwriter.config import get_settings
 from docwriter.graph import build_dependency_graph
 from docwriter.messaging import publish_stage_event, publish_status, send_queue_message
@@ -46,6 +46,28 @@ def _estimate_tokens(text: str) -> int:
         return len(encoding.encode(text))
     except Exception:
         return max(1, len(text) // 3)
+
+
+def _apply_diagram_results(text: str, results: List[Dict[str, Any]], job_id: str) -> str:
+    if not results:
+        return text
+
+    updated = text
+    for item in results:
+        code_block = item.get("code_block")
+        blob_path = item.get("relative_path") or item.get("blob_path")
+        if not code_block or not blob_path:
+            continue
+        prefix = f"jobs/{job_id}/"
+        relative_path = blob_path[len(prefix) :] if blob_path.startswith(prefix) else blob_path
+        diagram_id = item.get("diagram_id")
+        alt_text = item.get("alt_text") or (f"Diagram {diagram_id}" if diagram_id else "Diagram")
+        replacement = f"![{alt_text}]({relative_path})"
+        if code_block in updated:
+            updated = updated.replace(code_block, replacement, 1)
+        else:
+            logging.warning("Diagram block not found during finalize for job %s: %s", job_id, diagram_id)
+    return updated
 
 
 
@@ -545,8 +567,8 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
         publish_stage_event("REWRITE", "QUEUED", payload)
         send_queue_message(settings.sb_queue_rewrite, payload)
     elif dispatch_finalize:
-        publish_stage_event("FINALIZE", "QUEUED", payload)
-        send_queue_message(settings.sb_queue_finalize, payload)
+        publish_stage_event("DIAGRAM", "QUEUED", payload)
+        send_queue_message(settings.sb_queue_diagram_prep, payload)
 
 
 def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> None:
@@ -644,15 +666,19 @@ def process_finalize(data: Dict[str, Any]) -> None:
             job_id = data["job_id"]
             target_blob = data["out"]
             final_text = store.get_text(blob=target_blob)
-            final_text, image_map = replace_mermaid_with_images(final_text, job_id, store)
+            final_text = _apply_diagram_results(
+                final_text,
+                data.get("diagram_results", []),
+                job_id,
+            )
             store.put_text(blob=f"jobs/{job_id}/final.md", text=final_text)
-            pdf_bytes = export_pdf(final_text, image_map, store, job_id)
+            pdf_bytes = export_pdf(final_text, {}, store, job_id)
             if pdf_bytes:
                 try:
                     store.put_bytes(blob=f"jobs/{job_id}/final.pdf", data_bytes=pdf_bytes)
                 except Exception:
                     logging.exception("Failed to upload PDF export for job %s", job_id)
-            docx_bytes = export_docx(final_text, image_map, store, job_id)
+            docx_bytes = export_docx(final_text, {}, store, job_id)
             if docx_bytes:
                 try:
                     store.put_bytes(blob=f"jobs/{job_id}/final.docx", data_bytes=docx_bytes)

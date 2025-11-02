@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "docwriter"
 version = "0.1.0"
-description = "Agentic AI document writer with planning, writing, review, and Azure Service Bus scaling"
+description = "Agentic AI document writer with planning, review, diagram rendering, and Azure scaling"
 authors = [{ name = "DocWriter" }]
 requires-python = ">=3.10"
 dependencies = [

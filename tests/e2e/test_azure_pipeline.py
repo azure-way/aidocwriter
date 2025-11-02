@@ -16,6 +16,8 @@ from docwriter.queue import (
     process_rewrite,
     process_finalize,
 )
+from docwriter.stages.diagram_prep import process_diagram_prep
+from docwriter.diagram_renderer import process_diagram_render
 from docwriter.storage import BlobStore
 from docwriter.config import get_settings
 
@@ -127,7 +129,12 @@ def test_e2e_local_pipeline(monkeypatch):
                 print("[REWRITE] Targeted rewrites applied")
                 review_payload = pop_payload(settings.sb_queue_review)
                 continue
-            finalize_payload = pop_payload(settings.sb_queue_finalize)
+            diagram_prep_payload = pop_payload(settings.sb_queue_diagram_prep)
+            process_diagram_prep(diagram_prep_payload)
+            render_payload = try_pop_payload(settings.sb_queue_diagram_render)
+            if render_payload:
+                process_diagram_render(render_payload)
+            finalize_payload = pop_payload(settings.sb_queue_finalize_ready)
             process_finalize(finalize_payload)
             print("[FINALIZE] Final document stored in Blob Storage")
             break

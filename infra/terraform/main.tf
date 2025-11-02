@@ -172,11 +172,13 @@ module "app" {
     SERVICE_BUS_QUEUE_REVIEW        = "docwriter-review"
     SERVICE_BUS_QUEUE_VERIFY        = "docwriter-verify"
     SERVICE_BUS_QUEUE_REWRITE       = "docwriter-rewrite"
-    SERVICE_BUS_QUEUE_FINALIZE      = "docwriter-finalize"
+    SERVICE_BUS_QUEUE_DIAGRAM_PREP  = "docwriter-diagram-prep"
+    SERVICE_BUS_QUEUE_DIAGRAM_RENDER = "docwriter-diagram-render"
+    SERVICE_BUS_QUEUE_FINALIZE_READY = "docwriter-finalize-ready"
     SERVICE_BUS_TOPIC_STATUS        = module.service_bus.topic_name
     SERVICE_BUS_STATUS_SUBSCRIPTION = "status-writer"
     AZURE_BLOB_CONTAINER            = "docwriter"
-    PLANTUML_SERVER_APP_NAME        = "aidocwriter-plantuml"
+    PLANTUML_SERVER_URL             = "https://aidocwriter-plantuml.${module.container_apps_environment.default_domain}"
   }
   functions_images = {
     plan-intake     = "${module.container_registry.url}/docwriter-plan-intake:${var.docker_image_version}"
@@ -189,6 +191,7 @@ module "app" {
     finalize        = "${module.container_registry.url}/docwriter-finalize:${var.docker_image_version}"
     status          = "${module.container_registry.url}/docwriter-status:${var.docker_image_version}"
     diagram-render  = "${module.container_registry.url}/docwriter-diagram-render:${var.docker_image_version}"
+    diagram-prep    = "${module.container_registry.url}/docwriter-diagram-prep:${var.docker_image_version}"
   }
   functions_env = {
     OPENAI_BASE_URL                   = var.openai_base_url
@@ -200,13 +203,14 @@ module "app" {
     SERVICE_BUS_QUEUE_REVIEW          = "docwriter-review"
     SERVICE_BUS_QUEUE_VERIFY          = "docwriter-verify"
     SERVICE_BUS_QUEUE_REWRITE         = "docwriter-rewrite"
-    SERVICE_BUS_QUEUE_FINALIZE        = "docwriter-finalize"
+    SERVICE_BUS_QUEUE_DIAGRAM_PREP    = "docwriter-diagram-prep"
+    SERVICE_BUS_QUEUE_DIAGRAM_RENDER  = "docwriter-diagram-render"
+    SERVICE_BUS_QUEUE_FINALIZE_READY  = "docwriter-finalize-ready"
     SERVICE_BUS_TOPIC_STATUS          = module.service_bus.topic_name
     SERVICE_BUS_STATUS_SUBSCRIPTION   = "status-writer"
-    SERVICE_BUS_QUEUE_DIAGRAM_RENDER  = "docwriter-diagram-render"
     AZURE_BLOB_CONTAINER              = "docwriter"
     DOCWRITER_STATUS_TABLE            = "DocWriterStatus"
-    PLANTUML_SERVER_APP_NAME          = "aidocwriter-plantuml"
+    PLANTUML_SERVER_URL               = "https://aidocwriter-plantuml.${module.container_apps_environment.default_domain}"
   }
   api_secrets = [
     {
