@@ -209,7 +209,6 @@ module "app" {
     SERVICE_BUS_STATUS_SUBSCRIPTION   = "status-writer"
     AZURE_BLOB_CONTAINER              = "docwriter"
     DOCWRITER_STATUS_TABLE            = "DocWriterStatus"
-    PLANTUML_SERVER_URL               = "https://aidocwriter-plantuml.${module.container_apps_environment.default_domain}"
   }
   api_secrets = [
     {
