@@ -178,7 +178,6 @@ module "app" {
     SERVICE_BUS_TOPIC_STATUS        = module.service_bus.topic_name
     SERVICE_BUS_STATUS_SUBSCRIPTION = "status-writer"
     AZURE_BLOB_CONTAINER            = "docwriter"
-    PLANTUML_SERVER_URL             = "https://aidocwriter-plantuml.${module.container_apps_environment.default_domain}"
   }
   functions_images = {
     plan-intake     = "${module.container_registry.url}/docwriter-plan-intake:${var.docker_image_version}"

@@ -39,9 +39,9 @@ resource "azurerm_container_app" "api" {
       cpu    = 0.5
       memory = "1Gi"
 
-      env { 
-        name = "CONTAINER_APP_ENVIRONMENT_DOMAIN"
-        value = azurerm_container_app_environment.main.default_domain
+      env {
+        name = "PLANTUML_SERVER_URL"
+        value = "https://aidocwriter-plantuml.${azurerm_container_app_environment.main.default_domain}"
       }
 
       dynamic "env" {
