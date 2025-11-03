@@ -26,7 +26,8 @@ from docwriter.stage_utils import (
 from docwriter.storage import BlobStore
 from docwriter.summary import Summarizer
 from docwriter.telemetry import stage_timer, track_event, track_exception, StageTiming
-from .cycles import CycleState, enrich_details_with_cycles as _with_cycle_metadata, ensure_cycle_state
+from .cycles import CycleState, enrich_details_with_cycles as _with_cycle_metadata
+from docwriter.cycle_repository import ensure_cycle_state
 
 import tiktoken
 

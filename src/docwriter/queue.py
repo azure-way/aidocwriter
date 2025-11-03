@@ -25,7 +25,7 @@ from .workers import configure_logging as worker_configure_logging, run_processo
 from .stages import core as stages_core
 from .stages.diagram_prep import process_diagram_prep
 from .models import StatusEvent
-from .stages.cycles import ensure_cycle_state
+from docwriter.cycle_repository import ensure_cycle_state
 
 
 @dataclass
