@@ -79,6 +79,23 @@ def send_job(job: Job) -> str:
         "cycles_remaining": max(1, int(job.cycles)),
         "cycles_completed": 0,
     }
+    try:
+        store = BlobStore()
+        context_snapshot = {
+            "job_id": job_id,
+            "title": job.title,
+            "audience": job.audience,
+            "out": blob_path,
+            "cycles": payload["cycles"],
+            "cycles_remaining": payload["cycles_remaining"],
+            "cycles_completed": payload["cycles_completed"],
+        }
+        store.put_text(
+            blob=f"jobs/{job_id}/intake/context.json",
+            text=json.dumps(context_snapshot, indent=2),
+        )
+    except Exception as exc:
+        track_exception(exc, {"job_id": job_id, "operation": "write_initial_context"})
     settings = get_settings()
     _send(settings.sb_queue_plan_intake, payload)
     _status_stage_event(

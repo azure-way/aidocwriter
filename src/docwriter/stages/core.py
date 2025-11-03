@@ -398,7 +398,9 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
 def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) -> None:
     settings = get_settings()
     reviewer = reviewer or ReviewerAgent()
-    with stage_timer(job_id=data["job_id"], stage="REVIEW", cycle=int(data.get("cycles_completed", 0)) + 1) as timing:
+    cycle_idx = int(data.get("cycles_completed", 0)) + 1
+    publish_stage_event("REVIEW", "START", data)
+    with stage_timer(job_id=data["job_id"], stage="REVIEW", cycle=cycle_idx) as timing:
         store = BlobStore()
         draft = store.get_text(blob=data["out"])
         review_json = reviewer.review(plan=data["plan"], draft_markdown=draft)
@@ -408,7 +410,6 @@ def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) 
         cohesion = cohesion_agent.review_cohesion(plan=data["plan"], markdown=draft)
         summary_agent = SummaryReviewerAgent()
         summary = summary_agent.review_executive_summary(plan=data["plan"], markdown=draft)
-        cycle_idx = int(data.get("cycles_completed", 0)) + 1
     payload = {**data, "review_json": review_json, "style_json": style, "cohesion_json": cohesion, "exec_summary_json": summary}
     try:
         store = BlobStore()
@@ -449,10 +450,11 @@ def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) 
 def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) -> None:
     settings = get_settings()
     verifier = verifier or VerifierAgent()
-    with stage_timer(job_id=data["job_id"], stage="VERIFY", cycle=int(data.get("cycles_completed", 0)) + 1) as timing:
+    cycle_idx = int(data.get("cycles_completed", 0)) + 1
+    publish_stage_event("VERIFY", "START", data)
+    with stage_timer(job_id=data["job_id"], stage="VERIFY", cycle=cycle_idx) as timing:
         store = BlobStore()
         draft = store.get_text(blob=data["out"])
-        cycle_idx = int(data.get("cycles_completed", 0)) + 1
         try:
             review_data = json.loads(data.get("review_json", "{}"))
             revised = review_data.get("revised_markdown")
@@ -576,11 +578,12 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
     writer = writer or WriterAgent()
     cycle_state = CycleState.from_context(data)
     rewrite_tokens_total = 0
-    with stage_timer(job_id=data["job_id"], stage="REWRITE", cycle=int(data.get("cycles_completed", 0)) + 1) as timing:
+    cycle_idx = int(data.get("cycles_completed", 0)) + 1
+    publish_stage_event("REWRITE", "START", data)
+    with stage_timer(job_id=data["job_id"], stage="REWRITE", cycle=cycle_idx) as timing:
         plan = data["plan"]
         store = BlobStore()
         text = store.get_text(blob=data["out"])
-        cycle_idx = int(data.get("cycles_completed", 0)) + 1
         try:
             verification = json.loads(data.get("verification_json", "{}"))
         except Exception:

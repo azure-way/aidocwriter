@@ -145,6 +145,9 @@ def _current_cycle(data: Mapping[str, Any]) -> Optional[int]:
 def _format_stage_label(stage: Any) -> str:
     if not isinstance(stage, str) or not stage:
         return "Status update"
+    stage_upper = stage.upper()
+    if stage_upper == "REVIEW_START":
+        return "Review started"
     parts = stage.split("_")
     if not parts:
         return "Status update"
