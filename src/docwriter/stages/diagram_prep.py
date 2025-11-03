@@ -11,6 +11,7 @@ from ..storage import BlobStore
 
 DIAGRAM_BLOCK_RE = re.compile(r"```(?P<lang>plantuml)\s+(?P<body>[\s\S]*?)```", re.IGNORECASE)
 INLINE_UML_RE = re.compile(r"@startuml[\s\S]*?@enduml", re.IGNORECASE)
+DIAGRAM_ID_RE = re.compile(r"(?:^|\n)\s*(?:'|//|#)\s*diagram_id\s*:\s*([A-Za-z0-9_.\-]+)", re.IGNORECASE)
 
 
 def _extract_diagrams(markdown: str) -> List[Tuple[str, str]]:
@@ -53,12 +54,59 @@ def process_diagram_prep(data: Dict[str, Any]) -> None:
         publish_stage_event("FINALIZE", "QUEUED", payload)
         return
 
+    plan_specs = []
+    try:
+        plan_specs = (data.get("plan") or {}).get("diagram_specs") or []
+    except Exception:
+        plan_specs = []
+    spec_lookup = {}
+    ordered_specs: List[Dict[str, Any]] = []
+    for spec in plan_specs:
+        if not isinstance(spec, dict):
+            continue
+        ordered_specs.append(spec)
+        spec_id = spec.get("diagram_id")
+        if isinstance(spec_id, str) and spec_id:
+            spec_lookup[spec_id] = spec
+
+    def _claim_spec(spec_id: str | None, used: set[int]) -> Dict[str, Any] | None:
+        if spec_id and spec_id in spec_lookup:
+            spec = spec_lookup[spec_id]
+            used.add(id(spec))
+            return spec
+        for candidate in ordered_specs:
+            cid = id(candidate)
+            if cid in used:
+                continue
+            used.add(cid)
+            return candidate
+        return None
+
+    def _slugify(value: str) -> str:
+        cleaned = re.sub(r"[^a-z0-9_.-]+", "-", value.lower())
+        cleaned = cleaned.strip("-") or "diagram"
+        return cleaned
+
     requests: List[Dict[str, Any]] = []
     preferred_format = _normalize_format(data.get("diagram_format"))
+    used_specs: set[int] = set()
     for idx, (code_block, body) in enumerate(diagrams, start=1):
-        diagram_id = f"diagram_{idx}"
-        fmt = preferred_format
-        blob_path = f"jobs/{job_id}/images/{diagram_id}.{fmt}"
+        ident_match = DIAGRAM_ID_RE.search(code_block)
+        diagram_id = ident_match.group(1).strip() if ident_match else None
+        spec = _claim_spec(diagram_id, used_specs)
+        if not diagram_id:
+            if spec and isinstance(spec.get("diagram_id"), str):
+                diagram_id = spec.get("diagram_id")
+        if not diagram_id:
+            diagram_id = f"diagram_{idx}"
+        safe_id = _slugify(diagram_id)
+        fmt = _normalize_format((spec or {}).get("format") or preferred_format)
+        alt_text = None
+        if spec:
+            alt_text = spec.get("alt_text") or spec.get("title") or spec.get("diagram_type")
+        if not alt_text:
+            alt_text = f"Diagram {diagram_id}"
+        blob_path = f"jobs/{job_id}/images/{safe_id}.{fmt}"
         requests.append(
             {
                 "diagram_id": diagram_id,
@@ -66,6 +114,7 @@ def process_diagram_prep(data: Dict[str, Any]) -> None:
                 "code_block": code_block,
                 "format": fmt,
                 "blob_path": blob_path,
+                "alt_text": alt_text,
             }
         )
 

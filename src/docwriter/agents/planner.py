@@ -40,7 +40,7 @@ class PlannerAgent:
         )
         sys = (
             "You are a meticulous planning agent. Produce a JSON plan for a long, consistent,"
-            " markdown document with sections, objectives, constraints, glossary, and mermaid diagram specs."
+            " markdown document with sections, objectives, constraints, glossary, and PlantUML diagram specs."
             " Keep it compact but complete."
         )
         user = f"Title: {title}\nAudience: {audience}\nTarget length pages: {length_pages}"
@@ -51,16 +51,11 @@ class PlannerAgent:
             "- outline: list of sections {id, title, goals, key_points, dependencies}\n"
             "- glossary: {term: definition}\n"
             "- global_style: {tone, pov, formatting_rules}\n"
-            "- diagram_specs: list of {section_id, type, mermaid_goal, entities, relationships}\n"
-        )
-
-        prompt = (
-            "Respond ONLY with JSON having keys: title, audience, length_pages, outline, glossary,"
-            " global_style, diagram_specs.\n"
-            "- outline: list of sections {id, title, goals, key_points, dependencies}\n"
-            "- glossary: {term: definition}\n"
-            "- global_style: {tone, pov, formatting_rules}\n"
-            "- diagram_specs: list of {section_id, type, mermaid_goal, entities, relationships}\n"
+            "- diagram_specs: list of {diagram_id, section_id, title, diagram_type, plantuml_prompt,"
+            " description, entities, relationships, alt_text, format}\n"
+            "- diagram_id must be unique across the plan and safe for use in filenames (lowercase, hyphen or underscore)\n"
+            "- plantuml_prompt should explain what the PlantUML diagram must depict.\n"
+            "- alt_text should be a short caption for the rendered image.\n"
         )
 
         response_format = {
@@ -107,9 +102,12 @@ class PlannerAgent:
                             "items": {
                                 "type": "object",
                                 "properties": {
+                                    "diagram_id": {"type": "string"},
                                     "section_id": {"type": "string"},
-                                    "type": {"type": "string"},
-                                    "mermaid_goal": {"type": "string"},
+                                    "title": {"type": "string"},
+                                    "diagram_type": {"type": "string"},
+                                    "plantuml_prompt": {"type": "string"},
+                                    "description": {"type": "string"},
                                     "entities": {
                                         "type": "array",
                                         "items": {"type": "string"},
@@ -118,8 +116,11 @@ class PlannerAgent:
                                         "type": "array",
                                         "items": {"type": "string"},
                                     },
+                                    "alt_text": {"type": "string"},
+                                    "format": {"type": "string"},
+                                    "mermaid_goal": {"type": "string"},  # backwards compatibility
                                 },
-                                "required": ["section_id", "type"],
+                                "required": ["diagram_id", "section_id", "title"],
                             },
                         },
                     },

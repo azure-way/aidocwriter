@@ -9,7 +9,7 @@ class FakeLLM:
             def gen():
                 yield "# Section Title\n"
                 yield "Some content with a diagram.\n"
-                yield "```mermaid\ngraph TD;A-->B;\n```\n"
+                yield "```plantuml\n' diagram_id: s1-flow\n@startuml\nA -> B : call\n@enduml\n```\n"
             return gen()
         return "# Section Title\nContent.\n"
 
@@ -20,4 +20,3 @@ def test_writer_streaming_section():
     section = {"id": "s1", "title": "Intro"}
     text = "".join(list(writer.write_section(plan, section)))
     assert "# Section Title" in text
-

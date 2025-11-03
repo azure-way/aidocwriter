@@ -132,7 +132,7 @@ class InterviewerAgent:
             guide = (
                 "Return ONLY JSON list of {id, q}. Ask for gaps, ambiguous items, or needed specifics."
                 " Do not repeat already answered items unless clarification is needed."
-                "If there is a question about diagrams, you must answer to use Mermaid syntax."
+                "If there is a question about diagrams, you must answer in terms of PlantUML diagrams (actors, participants, relationships)."
             )
             out = self.llm.chat(
                 model=self.settings.planner_model,

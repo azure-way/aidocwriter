@@ -33,7 +33,7 @@ class WriterAgent:
     ) -> Iterator[str]:
         sys = (
             "You are a disciplined technical writer. Write Markdown that strictly adheres to the provided"
-            " plan, maintains global consistency, and embeds mermaid diagrams where requested."
+            " plan, maintains global consistency, and embeds PlantUML diagrams where requested."
         )
         style = plan.get("global_style", {})
         glossary = plan.get("glossary", {})
@@ -49,7 +49,10 @@ class WriterAgent:
             f"Dependency context (key facts to respect): {dependency_context or 'N/A'}\n"
             "Rules:\n- Use consistent terminology from the glossary.\n"
             "- Be concise but thorough; prefer clear subsections and lists.\n"
-            "- Include mermaid code blocks for each diagram spec.\n"
+            "- For each diagram spec, produce exactly one ```plantuml``` code block.\n"
+            "- The first non-blank line inside every PlantUML block must be a single-quote comment"
+            " containing \"diagram_id: <diagram_id>\" for the matching spec.\n"
+            "- Use the plantuml_prompt or description to choose actors, lifelines, and relationships.\n"
         )
         if extra_guidance:
             guide += (

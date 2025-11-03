@@ -111,6 +111,7 @@ def process_diagram_render(data: Dict[str, Any]) -> None:
                         "relative_path": relative_path,
                         "code_block": request.get("code_block"),
                         "format": fmt,
+                        "alt_text": request.get("alt_text"),
                     }
                 )
             payload = {**finalize_payload, "diagram_results": results}

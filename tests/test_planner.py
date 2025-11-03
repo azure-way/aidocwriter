@@ -22,7 +22,19 @@ def test_planner_returns_structured_plan():
             "outline": [{"id": "s1", "title": "Intro", "goals": [], "key_points": [], "dependencies": []}],
             "glossary": {"LLM": "Large language model"},
             "global_style": {"tone": "informative"},
-            "diagram_specs": [{"section_id": "s1", "type": "graph", "mermaid_goal": "flow", "entities": [], "relationships": []}],
+            "diagram_specs": [
+                {
+                    "diagram_id": "s1-flow",
+                    "section_id": "s1",
+                    "title": "Process overview",
+                    "diagram_type": "sequence",
+                    "plantuml_prompt": "Show the high level data flow between User, API, and Database.",
+                    "entities": ["User", "API", "Database"],
+                    "relationships": ["User -> API", "API -> Database"],
+                    "alt_text": "Sequence diagram of user/API/database flow",
+                    "format": "png",
+                }
+            ],
         }
     )
     planner = PlannerAgent(llm=FakeLLM(payload))
@@ -31,4 +43,3 @@ def test_planner_returns_structured_plan():
     assert plan.audience == "Engineers"
     assert plan.length_pages == 50
     assert plan.outline and plan.glossary and plan.global_style and plan.diagram_specs
-
