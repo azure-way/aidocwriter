@@ -134,7 +134,7 @@ resource "azurerm_container_app" "functions" {
 
       env {
         name = "PLANTUML_SERVER_URL"
-        value = "https://aidocwriter-plantuml.${azurerm_container_app_environment.main.default_domain}"
+                value = "https://${var.plantuml_server_name}.${azurerm_container_app_environment.main.default_domain}"
       }
 
       dynamic "env" {

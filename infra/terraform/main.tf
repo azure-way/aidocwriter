@@ -151,6 +151,8 @@ module "app" {
   log_analytics_id         = module.monitoring.log_analytics_id
   managed_identity_id      = azurerm_user_assigned_identity.ca_identity.id
   container_registry_login = module.container_registry.url
+  plantuml_server_name     = var.plantuml_server_name
+
   tags                     = var.tags
   api_images               = {
     api      = "${module.container_registry.url}/docwriter-api:${var.docker_image_version}"

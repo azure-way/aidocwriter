@@ -16,6 +16,11 @@ variable "location" {
   default     = "westeurope"
 }
 
+variable "plantuml_server_name" {
+  type = string
+  default = "aidocwriter-plantuml"
+}
+
 variable "tags" {
   description = "Common tags applied to resources"
   type        = map(string)

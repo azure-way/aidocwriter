@@ -63,3 +63,9 @@ variable "api_secrets" {
   }))
   default = []
 }
+
+
+variable "plantuml_server_name" {
+  type = string
+  default = "aidocwriter-plantuml"
+}
