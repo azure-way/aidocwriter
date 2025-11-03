@@ -25,7 +25,7 @@ from .workers import configure_logging as worker_configure_logging, run_processo
 from .stages import core as stages_core
 from .stages.diagram_prep import process_diagram_prep
 from .models import StatusEvent
-from .stages.cycles import CycleState
+from .stages.cycles import ensure_cycle_state
 
 
 @dataclass
@@ -77,8 +77,6 @@ def send_job(job: Job) -> str:
         "audience": job.audience,
         "out": blob_path,
         "cycles": max(1, int(job.cycles)),
-        "cycles_remaining": max(1, int(job.cycles)),
-        "cycles_completed": 0,
     }
     try:
         store = BlobStore()
@@ -87,9 +85,6 @@ def send_job(job: Job) -> str:
             "title": job.title,
             "audience": job.audience,
             "out": blob_path,
-            "cycles": payload["cycles"],
-            "cycles_remaining": payload["cycles_remaining"],
-            "cycles_completed": payload["cycles_completed"],
         }
         store.put_text(
             blob=f"jobs/{job_id}/intake/context.json",
@@ -123,8 +118,8 @@ def send_job(job: Job) -> str:
                     "artifact": blob_path,
                     "notes": f"requested cycles {job.cycles}",
                     "expected_cycles": job.cycles,
-                    "cycles_remaining": payload["cycles_remaining"],
-                    "cycles_completed": payload["cycles_completed"],
+                    "cycles_remaining": job.cycles,
+                    "cycles_completed": 0,
                 }
             },
         ).to_payload()
@@ -134,29 +129,10 @@ def send_job(job: Job) -> str:
         {
             "job_id": job_id,
             "stage": "PLAN_INTAKE",
-            "cycles_remaining": str(payload["cycles_remaining"]),
+            "cycles_remaining": str(job.cycles),
         },
     )
     return job_id
-
-
-def worker_plan_intake() -> None:
-    settings = _sb_check()
-    interviewer = InterviewerAgent()
-
-    def handle(_msg, data: Dict[str, Any]):
-        process_plan_intake(data, interviewer)
-    _run_processor(settings.sb_queue_plan_intake, handle, stage_name="PLAN_INTAKE")
-
-
-def worker_intake_resume() -> None:
-    settings = _sb_check()
-
-    def handle(_msg, data: Dict[str, Any]):
-        process_intake_resume(data)
-
-    _run_processor(settings.sb_queue_intake_resume, handle, stage_name="INTAKE_RESUME")
-
 
 def send_resume(job_id: str) -> None:
     settings = get_settings()
@@ -172,8 +148,6 @@ def send_resume(job_id: str) -> None:
                     "audience": context.get("audience"),
                     "out": context.get("out"),
                     "cycles": context.get("cycles"),
-                    "cycles_remaining": context.get("cycles_remaining"),
-                    "cycles_completed": context.get("cycles_completed"),
                 }
             )
     except Exception as exc:
@@ -184,9 +158,10 @@ def send_resume(job_id: str) -> None:
         except Exception as exc:
             track_exception(exc, {"job_id": job_id, "operation": "allocate_document_blob_resume"})
             payload["out"] = f"/tmp/{job_id}_document.md"
+    
+    ensure_cycle_state(payload)
     if payload.get("cycles") is None and payload.get("expected_cycles") is None:
         raise RuntimeError(f"Resume requested for job {job_id} without intake context")
-    CycleState.from_context(payload).apply(payload)
     _send(settings.sb_queue_intake_resume, payload)
     _status_stage_event(
         "INTAKE_RESUME",

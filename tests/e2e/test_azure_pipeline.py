@@ -77,8 +77,7 @@ def test_e2e_local_pipeline(monkeypatch):
             "title": "Microsoft Dynamics 365 integrations with external systems",
             "audience": "Integration architects",
             "out": str(out),
-            "cycles_remaining": 1,
-            "cycles_completed": 0,
+            "cycles": 1,
         }
 
         # Intake

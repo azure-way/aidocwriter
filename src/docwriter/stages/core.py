@@ -26,7 +26,7 @@ from docwriter.stage_utils import (
 from docwriter.storage import BlobStore
 from docwriter.summary import Summarizer
 from docwriter.telemetry import stage_timer, track_event, track_exception, StageTiming
-from .cycles import CycleState, enrich_details_with_cycles as _with_cycle_metadata
+from .cycles import CycleState, enrich_details_with_cycles as _with_cycle_metadata, ensure_cycle_state
 
 import tiktoken
 
@@ -158,6 +158,7 @@ def _stage_completed_event(
 def process_plan_intake(data: Dict[str, Any], interviewer: InterviewerAgent | None = None) -> None:
     settings = get_settings()
     interviewer = interviewer or InterviewerAgent()
+    ensure_cycle_state(data)
     artifact_path = f"jobs/{data['job_id']}/intake/questions.json"
     with stage_timer(job_id=data["job_id"], stage="PLAN_INTAKE") as timing:
         title = data["title"]
@@ -172,9 +173,6 @@ def process_plan_intake(data: Dict[str, Any], interviewer: InterviewerAgent | No
                 "title": data.get("title"),
                 "audience": data.get("audience"),
                 "out": data.get("out"),
-                "cycles": data.get("cycles"),
-                "cycles_remaining": data.get("cycles_remaining"),
-                "cycles_completed": data.get("cycles_completed"),
             }
             store.put_text(
                 blob=f"jobs/{data['job_id']}/intake/context.json",
@@ -225,24 +223,30 @@ def process_intake_resume(data: Dict[str, Any]) -> None:
     settings = get_settings()
     job_id = data.get("job_id")
     if job_id:
-        try:
-            store = BlobStore()
-            context_text = store.get_text(blob=f"jobs/{job_id}/intake/context.json")
-            context = json.loads(context_text)
-        except Exception as exc:
-            context = None
-            track_exception(exc, {"job_id": job_id, "stage": "INTAKE_RESUME", "operation": "load_intake_context"})
-        if isinstance(context, dict):
-            if not isinstance(data.get("title"), str) or not data.get("title"):
-                data["title"] = context.get("title")
-            if not isinstance(data.get("audience"), str) or not data.get("audience"):
-                data["audience"] = context.get("audience")
-            if not isinstance(data.get("out"), str) or not data.get("out"):
-                data["out"] = context.get("out")
-            for key in ("cycles", "cycles_remaining", "cycles_completed", "expected_cycles"):
-                if data.get(key) is None and context.get(key) is not None:
-                    data[key] = context.get(key)
-    CycleState.from_context(data).apply(data)
+        needed_keys = (
+            "title",
+            "audience",
+            "out",
+        )
+        needs_context = any(data.get(key) in (None, "", []) for key in needed_keys)
+        if needs_context:
+            try:
+                store = BlobStore()
+                context_text = store.get_text(blob=f"jobs/{job_id}/intake/context.json")
+                context = json.loads(context_text)
+            except Exception as exc:
+                context = None
+                track_exception(exc, {"job_id": job_id, "stage": "INTAKE_RESUME", "operation": "load_intake_context"})
+            if isinstance(context, dict):
+                if not isinstance(data.get("title"), str) or not data.get("title"):
+                    data["title"] = context.get("title")
+                if not isinstance(data.get("audience"), str) or not data.get("audience"):
+                    data["audience"] = context.get("audience")
+                if not isinstance(data.get("out"), str) or not data.get("out"):
+                    data["out"] = context.get("out")
+        ensure_cycle_state(data)
+    else:
+        CycleState.from_context(data).apply(data)
     with stage_timer(job_id=data["job_id"], stage="INTAKE_RESUME") as timing:
         publish_stage_event("PLAN", "QUEUED", data)
         send_queue_message(settings.sb_queue_plan, data)
@@ -275,6 +279,7 @@ def process_intake_resume(data: Dict[str, Any]) -> None:
 def process_plan(data: Dict[str, Any], planner: PlannerAgent | None = None) -> None:
     settings = get_settings()
     planner = planner or PlannerAgent()
+    ensure_cycle_state(data)
     store: BlobStore | None = None
     try:
         store = BlobStore()
@@ -368,6 +373,7 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
     settings = get_settings()
     writer = writer or WriterAgent()
     summarizer = summarizer or Summarizer()
+    ensure_cycle_state(data)
     blob_path = data.get("out")
     if not isinstance(blob_path, str) or not blob_path:
         blob_path = BlobStore().allocate_document_blob(data["job_id"])
@@ -418,6 +424,7 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
 def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) -> None:
     settings = get_settings()
     reviewer = reviewer or ReviewerAgent()
+    ensure_cycle_state(data)
     cycle_idx = int(data.get("cycles_completed", 0)) + 1
     publish_stage_event("REVIEW", "START", data)
     with stage_timer(job_id=data["job_id"], stage="REVIEW", cycle=cycle_idx) as timing:
@@ -470,6 +477,7 @@ def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) 
 def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) -> None:
     settings = get_settings()
     verifier = verifier or VerifierAgent()
+    ensure_cycle_state(data)
     cycle_idx = int(data.get("cycles_completed", 0)) + 1
     publish_stage_event("VERIFY", "START", data)
     with stage_timer(job_id=data["job_id"], stage="VERIFY", cycle=cycle_idx) as timing:
@@ -497,8 +505,7 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
             dependency_summaries=data.get("dependency_summaries", {}), final_markdown=draft
         )
     payload = {**data, "verification_json": verification_json}
-    cycle_state = CycleState.from_context(payload)
-    cycle_state.apply(payload)
+    cycle_state = ensure_cycle_state(payload)
     try:
         store = BlobStore()
         store.put_text(
@@ -596,7 +603,7 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
 def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> None:
     settings = get_settings()
     writer = writer or WriterAgent()
-    cycle_state = CycleState.from_context(data)
+    cycle_state = ensure_cycle_state(data)
     rewrite_tokens_total = 0
     cycle_idx = int(data.get("cycles_completed", 0)) + 1
     publish_stage_event("REWRITE", "START", data)
@@ -682,6 +689,7 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
 
 
 def process_finalize(data: Dict[str, Any]) -> None:
+    ensure_cycle_state(data)
     final_text = ""
     with stage_timer(job_id=data["job_id"], stage="FINALIZE") as timing:
         try:
