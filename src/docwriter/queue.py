@@ -25,6 +25,7 @@ from .workers import configure_logging as worker_configure_logging, run_processo
 from .stages import core as stages_core
 from .stages.diagram_prep import process_diagram_prep
 from .models import StatusEvent
+from .stages.cycles import CycleState
 
 
 @dataclass
@@ -183,6 +184,9 @@ def send_resume(job_id: str) -> None:
         except Exception as exc:
             track_exception(exc, {"job_id": job_id, "operation": "allocate_document_blob_resume"})
             payload["out"] = f"/tmp/{job_id}_document.md"
+    if payload.get("cycles") is None and payload.get("expected_cycles") is None:
+        raise RuntimeError(f"Resume requested for job {job_id} without intake context")
+    CycleState.from_context(payload).apply(payload)
     _send(settings.sb_queue_intake_resume, payload)
     _status_stage_event(
         "INTAKE_RESUME",

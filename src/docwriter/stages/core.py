@@ -223,6 +223,26 @@ def process_plan_intake(data: Dict[str, Any], interviewer: InterviewerAgent | No
 
 def process_intake_resume(data: Dict[str, Any]) -> None:
     settings = get_settings()
+    job_id = data.get("job_id")
+    if job_id:
+        try:
+            store = BlobStore()
+            context_text = store.get_text(blob=f"jobs/{job_id}/intake/context.json")
+            context = json.loads(context_text)
+        except Exception as exc:
+            context = None
+            track_exception(exc, {"job_id": job_id, "stage": "INTAKE_RESUME", "operation": "load_intake_context"})
+        if isinstance(context, dict):
+            if not isinstance(data.get("title"), str) or not data.get("title"):
+                data["title"] = context.get("title")
+            if not isinstance(data.get("audience"), str) or not data.get("audience"):
+                data["audience"] = context.get("audience")
+            if not isinstance(data.get("out"), str) or not data.get("out"):
+                data["out"] = context.get("out")
+            for key in ("cycles", "cycles_remaining", "cycles_completed", "expected_cycles"):
+                if data.get(key) is None and context.get(key) is not None:
+                    data[key] = context.get(key)
+    CycleState.from_context(data).apply(data)
     with stage_timer(job_id=data["job_id"], stage="INTAKE_RESUME") as timing:
         publish_stage_event("PLAN", "QUEUED", data)
         send_queue_message(settings.sb_queue_plan, data)
