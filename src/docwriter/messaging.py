@@ -137,9 +137,18 @@ _ALLOWED_STATUS_EXTRA_KEYS: Set[str] = {
 
 def _current_cycle(data: Mapping[str, Any]) -> Optional[int]:
     try:
-        return int(data.get("cycles_completed", 0)) + 1
+        completed = int(data.get("cycles_completed", 0))
     except Exception:
-        return None
+        completed = 0
+    requested: Optional[int]
+    try:
+        requested = int(data.get("cycles") or data.get("expected_cycles") or 0)
+    except Exception:
+        requested = None
+    cycle = completed + 1
+    if requested and requested > 0:
+        cycle = min(requested, cycle)
+    return max(1, cycle)
 
 
 def _format_stage_label(stage: Any) -> str:

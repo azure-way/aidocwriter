@@ -425,8 +425,8 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
 def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) -> None:
     settings = get_settings()
     reviewer = reviewer or ReviewerAgent()
-    ensure_cycle_state(data)
-    cycle_idx = int(data.get("cycles_completed", 0)) + 1
+    cycle_state = ensure_cycle_state(data)
+    cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
     publish_stage_event("REVIEW", "START", data)
     with stage_timer(job_id=data["job_id"], stage="REVIEW", cycle=cycle_idx) as timing:
         store = BlobStore()
@@ -478,8 +478,8 @@ def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) 
 def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) -> None:
     settings = get_settings()
     verifier = verifier or VerifierAgent()
-    ensure_cycle_state(data)
-    cycle_idx = int(data.get("cycles_completed", 0)) + 1
+    cycle_state = ensure_cycle_state(data)
+    cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
     publish_stage_event("VERIFY", "START", data)
     with stage_timer(job_id=data["job_id"], stage="VERIFY", cycle=cycle_idx) as timing:
         store = BlobStore()
@@ -606,7 +606,7 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
     writer = writer or WriterAgent()
     cycle_state = ensure_cycle_state(data)
     rewrite_tokens_total = 0
-    cycle_idx = int(data.get("cycles_completed", 0)) + 1
+    cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
     publish_stage_event("REWRITE", "START", data)
     with stage_timer(job_id=data["job_id"], stage="REWRITE", cycle=cycle_idx) as timing:
         plan = data["plan"]
