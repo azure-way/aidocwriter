@@ -14,6 +14,32 @@ INLINE_UML_RE = re.compile(r"@startuml[\s\S]*?@enduml", re.IGNORECASE)
 DIAGRAM_ID_RE = re.compile(r"(?:^|\n)\s*(?:'|//|#)\s*diagram_id\s*:\s*([A-Za-z0-9_.\-]+)", re.IGNORECASE)
 
 
+def _sanitize_source(body: str) -> str:
+    lines = body.splitlines()
+    sanitized: List[str] = []
+    started = False
+    for line in lines:
+        stripped = line.strip()
+        if not started:
+            if stripped.startswith("@startuml"):
+                sanitized.append(stripped)
+                started = True
+            elif stripped.startswith(("'", "//", "#")):
+                continue
+            else:
+                continue
+        else:
+            if stripped.startswith(("'", "//", "#")) and not stripped.lower().startswith("@enduml"):
+                continue
+            sanitized.append(stripped)
+    if not started:
+        # fallback: wrap body if @startuml missing
+        sanitized = ["@startuml"] + [line.strip() for line in lines if line.strip()] + ["@enduml"]
+    if not any(part.strip().startswith("@enduml") for part in sanitized):
+        sanitized.append("@enduml")
+    return "\n".join(sanitized)
+
+
 def _extract_diagrams(markdown: str) -> List[Tuple[str, str]]:
     matches: List[Tuple[int, int, str, str]] = []
 
@@ -107,10 +133,11 @@ def process_diagram_prep(data: Dict[str, Any]) -> None:
         if not alt_text:
             alt_text = f"Diagram {diagram_id}"
         blob_path = f"jobs/{job_id}/images/{safe_id}.{fmt}"
+        clean_source = _sanitize_source(body)
         requests.append(
             {
                 "diagram_id": diagram_id,
-                "source": body,
+                "source": clean_source,
                 "code_block": code_block,
                 "format": fmt,
                 "blob_path": blob_path,
