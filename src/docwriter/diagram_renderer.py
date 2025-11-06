@@ -31,7 +31,7 @@ def _render_with_plantuml(source: str, fmt: str) -> bytes:
         raise DiagramRenderError("PLANTUML_SERVER_URL not configured")
 
     normalized = server_url.rstrip("/")
-    endpoint = f"{normalized}/plantuml/{fmt}"
+    endpoint = f"{normalized}/{fmt}"
 
     try:
         response = requests.post(
