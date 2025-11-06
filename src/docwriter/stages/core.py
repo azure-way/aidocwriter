@@ -426,6 +426,15 @@ def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) 
     settings = get_settings()
     reviewer = reviewer or ReviewerAgent()
     cycle_state = ensure_cycle_state(data)
+    if cycle_state.completed >= cycle_state.requested:
+        logger.info(
+            "Job %s reached maximum cycles (%s); skipping additional review and moving to finalize queue",
+            data.get("job_id"),
+            cycle_state.requested,
+        )
+        publish_stage_event("DIAGRAM", "QUEUED", data)
+        send_queue_message(settings.sb_queue_diagram_prep, data)
+        return
     cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
     publish_stage_event("REVIEW", "START", data)
     with stage_timer(job_id=data["job_id"], stage="REVIEW", cycle=cycle_idx) as timing:
@@ -530,20 +539,8 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
         or bool(placeholder_sections)
     )
 
-    dispatch_rewrite = False
-    dispatch_finalize = False
-    if needs_rewrite and not cycle_state.exhausted:
-        payload["placeholder_sections"] = sorted(placeholder_sections)
-        dispatch_rewrite = True
-    else:
-        if needs_rewrite and cycle_state.exhausted:
-            logger.info(
-                "Job %s requires rewrite but maximum cycles (%s) reached; proceeding to finalize",
-                data.get("job_id"),
-                cycle_state.requested,
-            )
-        payload["placeholder_sections"] = []
-        dispatch_finalize = True
+    payload["placeholder_sections"] = sorted(placeholder_sections)
+    payload["requires_rewrite"] = needs_rewrite
     artifact_path = f"jobs/{data['job_id']}/cycle_{cycle_idx}/contradictions.json"
     verify_tokens = _usage_total(getattr(verifier.llm, "last_usage", None))
     if not verify_tokens:
@@ -593,12 +590,8 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
         )
     )
 
-    if dispatch_rewrite:
-        publish_stage_event("REWRITE", "QUEUED", payload)
-        send_queue_message(settings.sb_queue_rewrite, payload)
-    elif dispatch_finalize:
-        publish_stage_event("DIAGRAM", "QUEUED", payload)
-        send_queue_message(settings.sb_queue_diagram_prep, payload)
+    publish_stage_event("REWRITE", "QUEUED", payload)
+    send_queue_message(settings.sb_queue_rewrite, payload)
 
 
 def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> None:
@@ -606,74 +599,82 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
     writer = writer or WriterAgent()
     cycle_state = ensure_cycle_state(data)
     rewrite_tokens_total = 0
+    requires_rewrite = bool(data.get("requires_rewrite"))
     cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
     publish_stage_event("REWRITE", "START", data)
     with stage_timer(job_id=data["job_id"], stage="REWRITE", cycle=cycle_idx) as timing:
         plan = data["plan"]
         store = BlobStore()
         text = store.get_text(blob=data["out"])
-        try:
-            verification = json.loads(data.get("verification_json", "{}"))
-        except Exception:
-            verification = {"contradictions": []}
-        contradictions = verification.get("contradictions", [])
-        id_to_section = {str(s.get("id")): s for s in plan.get("outline", [])}
-        dependency_summaries = data.get("dependency_summaries", {})
+        if requires_rewrite:
+            try:
+                verification = json.loads(data.get("verification_json", "{}"))
+            except Exception:
+                verification = {"contradictions": []}
+            contradictions = verification.get("contradictions", [])
+            id_to_section = {str(s.get("id")): s for s in plan.get("outline", [])}
+            dependency_summaries = data.get("dependency_summaries", {})
 
-        style_guidance, style_sections = parse_review_guidance(data.get("style_json"))
-        cohesion_guidance, cohesion_sections = parse_review_guidance(data.get("cohesion_json"))
-        combined_guidance = "\n".join(filter(None, [style_guidance, cohesion_guidance]))
+            style_guidance, style_sections = parse_review_guidance(data.get("style_json"))
+            cohesion_guidance, cohesion_sections = parse_review_guidance(data.get("cohesion_json"))
+            combined_guidance = "\n".join(filter(None, [style_guidance, cohesion_guidance]))
 
-        affected = {str(c.get("section_id")) for c in contradictions if c.get("section_id")}
-        affected.update(style_sections)
-        affected.update(cohesion_sections)
+            affected = {str(c.get("section_id")) for c in contradictions if c.get("section_id")}
+            affected.update(style_sections)
+            affected.update(cohesion_sections)
 
-        if not affected and combined_guidance:
-            affected = set(id_to_section.keys())
+            if not affected and combined_guidance:
+                affected = set(id_to_section.keys())
 
-        placeholder_sections = {str(s) for s in data.get("placeholder_sections", [])}
-        affected.update(placeholder_sections)
+            placeholder_sections = {str(s) for s in data.get("placeholder_sections", [])}
+            affected.update(placeholder_sections)
 
-        if affected:
-            for sid in affected:
-                section = id_to_section.get(sid)
-                if not section:
-                    continue
-                deps = section.get("dependencies", []) or []
-                dep_context = "\n".join(
-                    [dependency_summaries.get(str(d), "") for d in deps if dependency_summaries.get(str(d))]
-                )
-                new_text = "".join(
-                    list(
-                        writer.write_section(
-                            plan=plan,
-                            section=section,
-                            dependency_context=dep_context,
-                            extra_guidance=combined_guidance,
+            if affected:
+                for sid in affected:
+                    section = id_to_section.get(sid)
+                    if not section:
+                        continue
+                    deps = section.get("dependencies", []) or []
+                    dep_context = "\n".join(
+                        [dependency_summaries.get(str(d), "") for d in deps if dependency_summaries.get(str(d))]
+                    )
+                    new_text = "".join(
+                        list(
+                            writer.write_section(
+                                plan=plan,
+                                section=section,
+                                dependency_context=dep_context,
+                                extra_guidance=combined_guidance,
+                            )
                         )
                     )
-                )
-                start_marker = f"<!-- SECTION:{sid}:START -->"
-                end_marker = f"<!-- SECTION:{sid}:END -->"
-                start_idx = text.find(start_marker)
-                end_idx = text.find(end_marker)
-                if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-                    end_idx += len(end_marker)
-                    text = text[:start_idx] + new_text + text[end_idx:]
-                rewrite_tokens_total += _usage_total(getattr(writer.llm, "last_usage", None))
-            store.put_text(blob=data["out"], text=text)
-            try:
-                store.put_text(blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/rewrite.md", text=text)
-            except Exception:
-                pass
-    next_cycle_state = cycle_state.consume_rewrite()
+                    start_marker = f"<!-- SECTION:{sid}:START -->"
+                    end_marker = f"<!-- SECTION:{sid}:END -->"
+                    start_idx = text.find(start_marker)
+                    end_idx = text.find(end_marker)
+                    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                        end_idx += len(end_marker)
+                        text = text[:start_idx] + new_text + text[end_idx:]
+                    rewrite_tokens_total += _usage_total(getattr(writer.llm, "last_usage", None))
+                store.put_text(blob=data["out"], text=text)
+                try:
+                    store.put_text(blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/rewrite.md", text=text)
+                except Exception:
+                    pass
     payload = {
         **data,
         "placeholder_sections": [],
     }
+    next_completed = min(cycle_state.requested, cycle_state.completed + 1)
+    next_cycle_state = CycleState(cycle_state.requested, next_completed)
     next_cycle_state.apply(payload)
-    publish_stage_event("REVIEW", "QUEUED", payload)
-    send_queue_message(settings.sb_queue_review, payload)
+    payload["requires_rewrite"] = False
+    if next_cycle_state.completed < next_cycle_state.requested:
+        publish_stage_event("REVIEW", "QUEUED", payload)
+        send_queue_message(settings.sb_queue_review, payload)
+    else:
+        publish_stage_event("DIAGRAM", "QUEUED", payload)
+        send_queue_message(settings.sb_queue_diagram_prep, payload)
     if not rewrite_tokens_total:
         rewrite_tokens_total = _estimate_tokens(text)
     publish_status(
