@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -23,6 +24,22 @@ def _normalize_format(fmt: Optional[str]) -> str:
     return "png"
 
 
+def _normalize_source_text(source: str) -> str:
+    if not isinstance(source, str):
+        return "@startuml\n@enduml"
+    normalized = source.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = normalized.replace("\\n", "\n")
+    lines = [line.rstrip() for line in normalized.split("\n")]
+    trimmed = "\n".join(lines).strip()
+    if not trimmed.lower().startswith("@startuml"):
+        trimmed = "@startuml\n" + trimmed
+    if not trimmed.lower().endswith("@enduml"):
+        if not trimmed.endswith("\n"):
+            trimmed += "\n"
+        trimmed += "@enduml"
+    return trimmed
+
+
 def _render_with_plantuml(source: str, fmt: str) -> bytes:
     import requests
 
@@ -31,19 +48,33 @@ def _render_with_plantuml(source: str, fmt: str) -> bytes:
         raise DiagramRenderError("PLANTUML_SERVER_URL not configured")
 
     normalized = server_url.rstrip("/")
-    endpoint = f"{normalized}/{fmt}"
+    endpoint = f"{normalized}/plantuml/{fmt}"
+    uml_source = _normalize_source_text(source)
 
+    tmp_path: str | None = None
     try:
-        response = requests.post(
-            endpoint,
-            data=source.encode("utf-8"),
-            headers={"Content-Type": "text/plain"},
-            timeout=30,
-        )
-        response.raise_for_status()
-        return response.content
-    except Exception as exc:  # pragma: no cover - defensive
-        raise DiagramRenderError(f"PlantUML rendering failed: {exc}") from exc
+        with tempfile.NamedTemporaryFile("w", delete=False, suffix=".puml", encoding="utf-8") as tmp:
+            tmp.write(uml_source)
+            tmp.flush()
+            tmp_path = tmp.name
+
+        try:
+            response = requests.post(
+                endpoint,
+                data=uml_source.encode("utf-8"),
+                headers={"Content-Type": "text/plain; charset=utf-8"},
+                timeout=30,
+            )
+            response.raise_for_status()
+            return response.content
+        except Exception as exc:  # pragma: no cover - defensive
+            raise DiagramRenderError(f"PlantUML rendering failed: {exc}") from exc
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 def process_diagram_render(data: Dict[str, Any]) -> None:
