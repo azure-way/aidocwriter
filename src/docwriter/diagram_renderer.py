@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import os
-import tempfile
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -40,7 +39,7 @@ def _normalize_source_text(source: str) -> str:
     return trimmed
 
 
-def _render_with_plantuml(source: str, fmt: str) -> bytes:
+def _render_with_plantuml(source: str | bytes, fmt: str) -> bytes:
     import requests
 
     server_url = os.getenv("PLANTUML_SERVER_URL")
@@ -49,32 +48,23 @@ def _render_with_plantuml(source: str, fmt: str) -> bytes:
 
     normalized = server_url.rstrip("/")
     endpoint = f"{normalized}/{fmt}"
-    uml_source = _normalize_source_text(source)
+    if isinstance(source, bytes):
+        payload_bytes = source
+    else:
+        uml_source = _normalize_source_text(source)
+        payload_bytes = uml_source.encode("utf-8")
 
-    tmp_path: str | None = None
     try:
-        with tempfile.NamedTemporaryFile("w", delete=False, suffix=".puml", encoding="utf-8") as tmp:
-            tmp.write(uml_source)
-            tmp.flush()
-            tmp_path = tmp.name
-
-        try:
-            response = requests.post(
-                endpoint,
-                data=uml_source.encode("utf-8"),
-                headers={"Content-Type": "text/plain; charset=utf-8"},
-                timeout=30,
-            )
-            response.raise_for_status()
-            return response.content
-        except Exception as exc:  # pragma: no cover - defensive
-            raise DiagramRenderError(f"PlantUML rendering failed: {exc}") from exc
-    finally:
-        if tmp_path:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+        response = requests.post(
+            endpoint,
+            data=payload_bytes,
+            headers={"Content-Type": "application/octet-stream"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.content
+    except Exception as exc:  # pragma: no cover - defensive
+        raise DiagramRenderError(f"PlantUML rendering failed: {exc}") from exc
 
 
 def process_diagram_render(data: Dict[str, Any]) -> None:
@@ -116,6 +106,7 @@ def process_diagram_render(data: Dict[str, Any]) -> None:
 
     if "diagram_requests" in data:
         finalize_payload = data.get("finalize_payload") or {}
+        code_blocks = finalize_payload.get("diagram_code_blocks") if isinstance(finalize_payload, dict) else {}
         requests = data.get("diagram_requests", [])
         if not isinstance(requests, list):
             raise DiagramRenderError("diagram_requests payload must be a list")
@@ -126,21 +117,26 @@ def process_diagram_render(data: Dict[str, Any]) -> None:
                 diag_id = request.get("diagram_id") or str(uuid4())
                 fmt = _normalize_format(request.get("format"))
                 blob_path = request.get("blob_path") or f"jobs/{job_id}/images/{diag_id}.{fmt}"
-                source_text = request.get("source")
-                if not source_text:
-                    raise DiagramRenderError(f"diagram {diag_id} missing source")
-                content = _render_with_plantuml(source_text, fmt)
+                source_path = request.get("source_path")
+                if not source_path:
+                    raise DiagramRenderError(f"diagram {diag_id} missing source_path")
+                try:
+                    source_bytes = store.get_bytes(source_path)
+                except Exception as exc:
+                    raise DiagramRenderError(f"failed to load diagram source for {diag_id}: {exc}") from exc
+                content = _render_with_plantuml(source_bytes, fmt)
                 store.put_bytes(blob=blob_path, data_bytes=content)
                 relative_path = blob_path
                 prefix = f"jobs/{job_id}/"
                 if blob_path.startswith(prefix):
                     relative_path = blob_path[len(prefix) :]
+                code_block_map = code_blocks if isinstance(code_blocks, dict) else {}
                 results.append(
                     {
                         "diagram_id": diag_id,
                         "blob_path": blob_path,
                         "relative_path": relative_path,
-                        "code_block": request.get("code_block"),
+                        "code_block": code_block_map.get(diag_id),
                         "format": fmt,
                         "alt_text": request.get("alt_text"),
                     }
@@ -156,9 +152,18 @@ def process_diagram_render(data: Dict[str, Any]) -> None:
             raise DiagramRenderError(f"unexpected rendering error: {exc}") from exc
         return
 
-    source = data.get("source") or data.get("diagram_source")
-    if not source:
-        raise DiagramRenderError("diagram render payload missing source")
+    source_path = data.get("source_path")
+    if source_path:
+        try:
+            store = BlobStore()
+            source_bytes = store.get_bytes(source_path)
+        except Exception as exc:
+            raise DiagramRenderError(f"failed to load diagram source: {exc}") from exc
+    else:
+        source = data.get("source") or data.get("diagram_source")
+        if not source:
+            raise DiagramRenderError("diagram render payload missing source")
+        source_bytes = None
 
     diagram_id = data.get("diagram_id") or str(uuid4())
     fmt = _normalize_format(data.get("format"))
@@ -167,7 +172,8 @@ def process_diagram_render(data: Dict[str, Any]) -> None:
         raise DiagramRenderError("diagram render payload missing source")
 
     try:
-        content = _render_with_plantuml(source, fmt)
+        payload = source_bytes if source_bytes is not None else source
+        content = _render_with_plantuml(payload, fmt)
         blob_path = data.get("blob_path") or f"jobs/{job_id}/images/{diagram_id}.{fmt}"
         store = BlobStore()
         store.put_bytes(blob=blob_path, data_bytes=content)

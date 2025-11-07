@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Tuple
 from ..config import get_settings
 from ..messaging import publish_stage_event, send_queue_message
 from ..storage import BlobStore
+from ..telemetry import track_exception
 
 
 DIAGRAM_BLOCK_RE = re.compile(r"```(?P<lang>plantuml)\s+(?P<body>[\s\S]*?)```", re.IGNORECASE)
@@ -15,29 +16,35 @@ DIAGRAM_ID_RE = re.compile(r"(?:^|\n)\s*(?:'|//|#)\s*diagram_id\s*:\s*([A-Za-z0-
 
 
 def _sanitize_source(body: str) -> str:
-    lines = body.splitlines()
+    raw = body.replace("\r\n", "\n").replace("\r", "\n")
+    raw = raw.replace("\\n", "\n")
+    lines = raw.split("\n")
     sanitized: List[str] = []
     started = False
     for line in lines:
         stripped = line.strip()
         if not started:
-            if stripped.startswith("@startuml"):
-                sanitized.append(stripped)
+            if stripped.lower().startswith("@startuml"):
+                sanitized.append(line)
                 started = True
-            elif stripped.startswith(("'", "//", "#")):
+            elif stripped.startswith(("'", "//", "#")) and "diagram_id" in stripped.lower():
+                continue
+            elif stripped == "":
                 continue
             else:
-                continue
+                sanitized.append(line)
         else:
-            if stripped.startswith(("'", "//", "#")) and not stripped.lower().startswith("@enduml"):
+            if stripped.startswith(("'", "//", "#")) and "diagram_id" in stripped.lower():
                 continue
-            sanitized.append(stripped)
+            sanitized.append(line)
     if not started:
-        # fallback: wrap body if @startuml missing
-        sanitized = ["@startuml"] + [line.strip() for line in lines if line.strip()] + ["@enduml"]
-    if not any(part.strip().startswith("@enduml") for part in sanitized):
-        sanitized.append("@enduml")
-    return "\n".join(sanitized)
+        sanitized = ["@startuml"] + sanitized + ["@enduml"]
+    text = "\n".join(sanitized)
+    if "@enduml" not in text.lower():
+        if not text.endswith("\n"):
+            text += "\n"
+        text += "@enduml"
+    return text
 
 
 def _extract_diagrams(markdown: str) -> List[Tuple[str, str]]:
@@ -114,6 +121,7 @@ def process_diagram_prep(data: Dict[str, Any]) -> None:
         return cleaned
 
     requests: List[Dict[str, Any]] = []
+    code_blocks: Dict[str, str] = {}
     preferred_format = _normalize_format(data.get("diagram_format"))
     used_specs: set[int] = set()
     for idx, (code_block, body) in enumerate(diagrams, start=1):
@@ -134,21 +142,28 @@ def process_diagram_prep(data: Dict[str, Any]) -> None:
             alt_text = f"Diagram {diagram_id}"
         blob_path = f"jobs/{job_id}/images/{safe_id}.{fmt}"
         clean_source = _sanitize_source(body)
+        source_blob = f"jobs/{job_id}/diagrams/{safe_id}.puml"
+        try:
+            store.put_text(blob=source_blob, text=clean_source)
+        except Exception as exc:
+            track_exception(exc, {"job_id": job_id, "stage": "DIAGRAM_PREP", "operation": "write_diagram_source"})
+            continue
+        code_blocks[diagram_id] = code_block
         requests.append(
             {
                 "diagram_id": diagram_id,
-                "source": clean_source,
-                "code_block": code_block,
+                "source_path": source_blob,
                 "format": fmt,
                 "blob_path": blob_path,
                 "alt_text": alt_text,
             }
         )
 
+    finalize_payload = {**data, "diagram_code_blocks": code_blocks}
     message = {
         "job_id": job_id,
         "diagram_requests": requests,
-        "finalize_payload": data,
+        "finalize_payload": finalize_payload,
     }
     send_queue_message(settings.sb_queue_diagram_render, message)
     publish_stage_event("DIAGRAM", "QUEUED", data)
