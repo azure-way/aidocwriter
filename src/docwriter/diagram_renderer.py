@@ -23,7 +23,7 @@ def _normalize_format(fmt: Optional[str]) -> str:
     return "png"
 
 
-def _render_with_plantuml(source: str | bytes, fmt: str) -> bytes:
+def _render_with_plantuml(source: str, fmt: str) -> bytes:
     import requests
 
     server_url = os.getenv("PLANTUML_SERVER_URL")
@@ -33,7 +33,7 @@ def _render_with_plantuml(source: str | bytes, fmt: str) -> bytes:
     try:
         response = requests.post(
             f"{server_url.rstrip('/')}/{fmt}",
-            data=source.encode("utf-8"),
+            data=source,
             headers={"Content-Type": "text/plain; charset=utf-8"},
             timeout=30,
         )

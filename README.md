@@ -1,6 +1,14 @@
-DocWriter v3 — AI Document Writer
+# DocWriter v3 — AI Document Writer
 
-Overview
+## Non-Technical Snapshot
+
+- **Purpose-built documents** – Produces executive-ready integration playbooks, migration guides, or architecture documents that stay coherent for 60+ pages.
+- **Stakeholder friendly** – Interactive intake questions capture goals, constraints, and tone before planning; multiple review cycles give teams a human-in-the-loop checkpoint.
+- **Diagram-rich storytelling** – PlantUML/Mermaid diagrams are authored automatically, rendered to PNG/SVG, and embedded in Markdown, PDF, and DOCX outputs.
+- **Transparent progress** – Every stage (plan, write, review, verify, rewrite) emits timeline events so product owners always know what’s happening.
+- **Cloud native** – Runs entirely on Azure with Service Bus queues, Blob Storage, Application Insights telemetry, and container-ready packaging for easy operations.
+
+## Technical Overview
 - Generates long, consistent Markdown documents (>60 pages) with Mermaid and PlantUML diagrams rendered into PNG/SVG.
 - Agentic pipeline: Planner (o3), Writer (gpt-4.1), Reviewer set (o3: general + style + cohesion + executive summary).
 - Queue-driven architecture on Azure Service Bus; artifacts stored in Azure Blob Storage.
@@ -8,7 +16,7 @@ Overview
 - REST-first workflow: jobs are created and monitored via FastAPI; Azure Functions host each worker stage.
 - Interactive intake: collects detailed requirements before planning for higher quality output.
 
-Quick Start
+## Quick Start
 1) Install dependencies (local development)
    - Python 3.10+
    - Create a virtualenv, then:
@@ -52,11 +60,11 @@ Quick Start
    - Run the Next.js UI: `npm run dev --prefix ui` (requires `NEXT_PUBLIC_API_BASE_URL`)
    - For lightweight development, you can invoke workers directly via `python -m docwriter.queue` helper functions or tests.
 
-GitHub Workflows
+## GitHub Workflows
 - `.github/workflows/docker-build.yml` builds all Function + API images and automatically invokes the Terraform workflow, passing the resolved Docker tag.
 - `.github/workflows/terraform.yml` provisions Azure resources (Service Bus, Blob Storage, Container Apps, monitoring). Triggered manually or via `workflow_call` from the build pipeline.
 
-FastAPI / REST usage
+## FastAPI / REST usage
 - Start locally: `uvicorn api.main:app --reload`
 - `POST /jobs` → Enqueue a document (`{"title": "...", "audience": "...", "cycles": 2}`)
 - `POST /jobs/{job_id}/resume` → Upload intake answers (`{"answers": {...}}`) and advance the pipeline
@@ -67,12 +75,12 @@ FastAPI / REST usage
 - `GET /healthz` → Basic health-check
 - (Authentication and additional endpoints will be added alongside the UI.)
 
-UI Highlights
+## UI Highlights
 - The `ui/` Next.js app shows job status, timeline, token usage, durations, and model names with glassmorphism styling.
 - Timeline view displays every stage; review cycles can expand to show each pass (review, verify, rewrite) with metrics.
 - Artifact actions use the `/jobs/artifacts` API so no direct Blob permissions are needed.
 
-Architecture (Queue-driven)
+## Architecture (Queue-driven)
 - Agents
   - Planner (o3): Produces a structured document plan, outline, glossary, constraints, and diagram specs.
   - Writer (gpt-4.1): Writes section-by-section with a shared memory (style + facts) to maintain consistency.
@@ -131,7 +139,7 @@ flowchart LR
     F -.-> R
 ```
 
-Azure Hosting Plan (in progress)
+## Azure Hosting Plan (in progress)
 - **Azure Functions per stage:** Each queue processor (plan-intake, intake-resume, plan, write, review, verify, rewrite, finalize) will run as an independent Python Azure Function with a Service Bus trigger, reusing the existing `process_*` handlers.
 - **Container Apps deployment:** Functions and the new REST API will be packaged as container images and hosted on Azure Container Apps for horizontal scaling and simplified ops.
 - **Public API:** A lightweight FastAPI service will mirror core CLI commands (enqueue job, resume intake, status polling) so future web clients can integrate without shell access. CLI remains fully supported.
@@ -140,7 +148,7 @@ Azure Hosting Plan (in progress)
 - `.github/workflows/docker-build.yml` builds/pushes all container images to an Azure Container Registry using OpenID Connect. Configure repository secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `ACR_NAME`, and `ACR_LOGIN_SERVER` before enabling the workflow.
 - **Shared configuration:** All runtimes (CLI, Functions, API) read configuration exclusively from environment variables.
 
-FastAPI / REST usage (early preview)
+### FastAPI / REST usage (early preview)
 - Detailed in the Quick Start section. Timeline and artifact endpoints give full stage visibility without Blob access.
 
 _Target directory highlights_
