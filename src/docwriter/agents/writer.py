@@ -52,7 +52,7 @@ class WriterAgent:
             "- For each diagram spec, produce exactly one ```plantuml``` code block.\n"
             "- The first non-blank line inside every PlantUML block must be a single-quote comment"
             " containing \"diagram_id: <diagram_id>\" for the matching spec.\n"
-            "- Ensure that labels in diagrams have the escaped new line characters (\\n) as needed for clarity.\n"
+            "- Ensure that labels/fields/descriptions in diagrams have the escaped new line characters (\\n). For example: wrong: RECTANGLE Dynamics365Sales <<Azure>> as Dynamics 365 \n Sales, correct: RECTANGLE Dynamics365Sales <<Azure>> as Dynamics 365 \\n Sales\n"
             "- Use the plantuml_prompt or description to choose actors, lifelines, and relationships.\n"
         )
         if extra_guidance:

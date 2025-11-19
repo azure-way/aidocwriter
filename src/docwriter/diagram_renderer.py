@@ -70,7 +70,7 @@ def process_diagram_render(data: Dict[str, Any]) -> None:
                 if not source_path:
                     raise DiagramRenderError(f"diagram {diag_id} missing source_path")
                 try:
-                    source_bytes = store.get_bytes(source_path)
+                    source_bytes = store.get_text(source_path)
                 except Exception as exc:
                     raise DiagramRenderError(f"failed to load diagram source for {diag_id}: {exc}") from exc
                 content = _render_with_plantuml(source_bytes, fmt)
