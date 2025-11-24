@@ -62,7 +62,7 @@ class LLMClient:
 
     def _supports_sampling(self, model: str) -> bool:
         # OpenAI "smart" models (o1, o3, etc.) do not allow sampling params like temperature
-        return not model.lower().startswith("o")
+        return not model.lower().startswith("o") and not model.lower().startswith("gpt-5")
 
     def _supports_response_format(self) -> bool:
         try:

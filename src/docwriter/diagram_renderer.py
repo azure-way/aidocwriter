@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from .config import get_settings
+from .llm import LLMClient, LLMMessage
 from .messaging import publish_stage_event, send_queue_message
 from .storage import BlobStore
 
@@ -39,57 +40,64 @@ def _normalize_source_text(source: str | bytes) -> str:
     return stripped
 
 
+_reformat_llm_client: Optional[LLMClient] = None
+
+
+def _get_reformat_client() -> LLMClient:
+    global _reformat_llm_client
+    if _reformat_llm_client is None:
+        settings = get_settings()
+        _reformat_llm_client = LLMClient(
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url,
+            api_version=settings.openai_api_version or "2024-08-01-preview",
+            use_responses=True,
+        )
+    return _reformat_llm_client
+
+
+def _strip_code_fences(text: str) -> str:
+    if "```" not in text:
+        return text
+    lines = text.strip().splitlines()
+    if lines and lines[0].startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].startswith("```"):
+        lines = lines[:-1]
+    return "\n".join(lines)
+
+
 def _reformat_plantuml_text(source: str | bytes) -> str:
     normalized = _normalize_source_text(source)
-    raw_lines = normalized.split("\n")
-    merged: List[str] = []
-
-    def _has_arrow(text: str) -> bool:
-        tokens = ("->", "<-", "-->", "<--", "..>", "<..", "--", "..")
-        return any(token in text for token in tokens)
-
-    pending: Optional[str] = None
-
-    for line in raw_lines:
-        trimmed = line.rstrip()
-        if pending is not None:
-            pending += " " + trimmed.strip()
-            if pending.count('"') % 2 == 0:
-                merged.append(pending)
-                pending = None
-            continue
-
-        if trimmed.count('"') % 2 == 1 and trimmed and not trimmed.lower().startswith("@end"):
-            pending = trimmed
-            continue
-
-        if merged:
-            previous = merged[-1]
-            if _has_arrow(previous) and not _has_arrow(trimmed) and trimmed and not trimmed.lower().startswith("@end"):
-                merged[-1] = previous.rstrip() + " " + trimmed.strip()
-                continue
-        merged.append(trimmed)
-
-    if pending is not None:
-        merged.append(pending)
-
-    formatted: List[str] = []
-    indent = 0
-    for line in merged:
-        stripped = line.strip()
-        if not stripped:
-            formatted.append("")
-            continue
-        lower = stripped.lower()
-        if stripped.startswith("}") or lower.startswith("end") or lower == "endif" or lower.startswith("else"):
-            indent = max(0, indent - 1)
-        formatted.append(("    " * indent) + stripped)
-        if stripped.endswith("{") or (lower.startswith("if ") and " then" in lower):
-            indent += 1
-    result = "\n".join(formatted)
-    if not result.endswith("\n"):
-        result += "\n"
-    return result
+    prompt = (
+        "Please reformat the following PlantUML code so that:\n"
+        "- Line breaks inside element names are removed\n"
+        "- Arrow labels stay on a single line\n"
+        "- Indentation is consistent\n"
+        "- All elements (actors, participants, lifelines, states, etc.) are clearly defined\n"
+        "- The diagram remains functionally identical\n"
+        "Return only the fixed PlantUML without additional commentary or fences."
+    )
+    messages = [
+        LLMMessage("system", "You are an assistant that cleans and formats PlantUML diagrams."),
+        LLMMessage("user", f"{prompt}\n\n<plantuml>\n{normalized}\n</plantuml>"),
+    ]
+    try:
+        model = os.getenv("DOCWRITER_PLANTUML_REFORMAT_MODEL", "gpt-5")
+        client = _get_reformat_client()
+        result = client.chat(model=model, messages=messages)
+        if isinstance(result, dict):
+            formatted = result.get("plantuml") or ""
+        else:
+            formatted = _strip_code_fences(str(result))
+        formatted = formatted.strip()
+        if not formatted:
+            return normalized
+        formatted = _normalize_source_text(formatted)
+        return formatted
+    except Exception:
+        raise
+        return normalized
 
 
 def _render_with_plantuml(source: str | bytes, fmt: str) -> bytes:
