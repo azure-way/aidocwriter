@@ -47,6 +47,7 @@
      export AZURE_STORAGE_CONNECTION_STRING=...
     export AZURE_BLOB_CONTAINER=docwriter
     export PLANTUML_SERVER_URL=https://plantuml.example.com
+     export DOCWRITER_PLANTUML_REFORMAT_MODEL=gpt-5 # optional, defaults to gpt-5 in Azure OpenAI
      export APPINSIGHTS_INSTRUMENTATION_KEY=... # optional, enables Application Insights telemetry
      ```
    - Optional overrides: `DOCWRITER_PLANNER_MODEL`, `DOCWRITER_WRITER_MODEL`, `DOCWRITER_STREAM`, etc. See `src/docwriter/config.py` for the full list.
@@ -170,6 +171,7 @@ Diagrams
 - The plan/review stages emit PlantUML blocks (` ```plantuml` or `@startuml…@enduml`).
 - Diagram-prep extracts these blocks and the diagram-render worker calls your PlantUML server (`PLANTUML_SERVER_URL`), storing PNG/SVG files under `jobs/<job_id>/images/`.
 - Finalize swaps the original blocks with image links so PDF/DOCX exports embed the rendered graphics.
+- PlantUML sources are preformatted by an Azure OpenAI GPT-5 call (`DOCWRITER_PLANTUML_REFORMAT_MODEL`) to fix line breaks, indentation, and labels before rendering; ensure the configured model is available in your Azure OpenAI resource.
 
 Consistency Strategy
 - Global memory: style guide, glossary, decisions, and facts shared across sections.

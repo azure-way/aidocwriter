@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from datetime import datetime
 from typing import Any, Dict, Optional, Mapping, List
 
 from docwriter.agents.cohesion_reviewer import CohesionReviewerAgent
@@ -70,6 +71,25 @@ def _apply_diagram_results(text: str, results: List[Dict[str, Any]], job_id: str
             logging.warning("Diagram block not found during finalize for job %s: %s", job_id, diagram_id)
     return updated
 
+
+def _build_title_page(plan: Dict[str, Any], metadata: Dict[str, Any]) -> str:
+    title = (plan.get("title") if isinstance(plan, dict) else None) or metadata.get("title") or "Generated Document"
+    audience = ""
+    if isinstance(plan, dict):
+        audience = str(plan.get("audience") or "").strip()
+    if not audience:
+        audience = str(metadata.get("audience") or "").strip()
+    job_id = metadata.get("job_id")
+    generated_on = datetime.utcnow().strftime("%Y-%m-%d")
+
+    lines: List[str] = ["<!-- TITLE_PAGE_START -->", f"# {title}", ""]
+    if audience:
+        lines.append(f"**Audience:** {audience}")
+    if job_id:
+        lines.append(f"**Job ID:** {job_id}")
+    lines.append(f"**Generated:** {generated_on}")
+    lines.extend(["", "<div style=\"page-break-after: always;\"></div>", "<!-- TITLE_PAGE_END -->", ""])
+    return "\n".join(lines)
 
 
 def _format_duration(duration_s: float | None) -> str:
@@ -397,7 +417,9 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
             summary = summarizer.summarize_section("\n\n".join(document_text_parts))
             dependency_summaries[sid] = summary
             write_tokens_total += _usage_total(getattr(writer.llm, "last_usage", None))
-        document_text = "\n\n".join(document_text_parts)
+        body_text = "\n\n".join(document_text_parts)
+        title_page = _build_title_page(plan, data)
+        document_text = f"{title_page}{body_text}" if body_text else title_page
     payload = {**data, "out": blob_path, "dependency_summaries": dependency_summaries}
     try:
         store = BlobStore()

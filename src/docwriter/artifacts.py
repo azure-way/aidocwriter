@@ -15,6 +15,8 @@ from .storage import BlobStore
 
 MERMAID_BLOCK_RE = re.compile(r"```mermaid\s+([\s\S]*?)```", re.IGNORECASE)
 IMAGE_PATTERN = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
+SLUG_INVALID_RE = re.compile(r"[^a-z0-9\- ]+", re.IGNORECASE)
+SLUG_SEP_RE = re.compile(r"[\s\-]+")
 
 
 def replace_mermaid_with_images(
@@ -90,6 +92,7 @@ def export_pdf(
         return f'src="data:image/png;base64,{encoded}"'
 
     html = re.sub(r'src="([^"]+)"', _replace_src, html)
+    html = _wrap_html_for_pdf(html)
     try:
         return HTML(string=html).write_pdf()
     except Exception:
@@ -169,9 +172,44 @@ def export_docx(
         return None
 
 
+def _slugify_heading(text: str) -> str:
+    normalized = SLUG_INVALID_RE.sub("", text or "")
+    normalized = normalized.lower()
+    parts = [part for part in SLUG_SEP_RE.split(normalized) if part]
+    return "-".join(parts) or "section"
+
+
+def _heading_id_plugin(md: "MarkdownIt") -> None:  # type: ignore[name-defined]
+    def add_ids(state: "StateInline") -> None:  # type: ignore[name-defined]
+        slug_counts: Dict[str, int] = {}
+        tokens = state.tokens
+        total = len(tokens)
+        for idx, token in enumerate(tokens):
+            if token.type != "heading_open":
+                continue
+            if token.attrGet("id"):
+                continue
+            if idx + 1 >= total:
+                continue
+            inline = tokens[idx + 1]
+            if inline.type != "inline":
+                continue
+            content = inline.content.strip()
+            if not content:
+                continue
+            base = _slugify_heading(content)
+            count = slug_counts.get(base, 0)
+            slug_counts[base] = count + 1
+            slug = base if count == 0 else f"{base}-{count}"
+            token.attrSet("id", slug)
+
+    md.core.ruler.after("inline", "heading_ids", add_ids)
+
+
 def _markdown_to_html(markdown: str) -> str:
     try:
         from markdown_it import MarkdownIt
+        from markdown_it.rules_inline import StateInline
     except Exception:
         logging.warning("markdown-it-py not installed; skipping HTML conversion")
         return ""
@@ -179,7 +217,31 @@ def _markdown_to_html(markdown: str) -> str:
     md = MarkdownIt("commonmark", {"html": True, "linkify": True})
     md.enable("table")
     md.enable("strikethrough")
+    _heading_id_plugin(md)
     return md.render(markdown)
+
+
+def _wrap_html_for_pdf(html: str) -> str:
+    styles = """
+    <style>
+        @page {
+            margin: 1in;
+        }
+
+        body {
+            font-family: "Helvetica", Arial, sans-serif;
+            font-size: 12pt;
+            line-height: 1.4;
+        }
+
+        img {
+            max-width: 100%;
+            height: auto;
+            page-break-inside: avoid;
+        }
+    </style>
+    """
+    return f"<!DOCTYPE html><html><head><meta charset='utf-8'/>{styles}</head><body>{html}</body></html>"
 
 
 def _resolve_image_bytes(
