@@ -48,14 +48,30 @@ def _reformat_plantuml_text(source: str | bytes) -> str:
         tokens = ("->", "<-", "-->", "<--", "..>", "<..", "--", "..")
         return any(token in text for token in tokens)
 
+    pending: Optional[str] = None
+
     for line in raw_lines:
         trimmed = line.rstrip()
+        if pending is not None:
+            pending += " " + trimmed.strip()
+            if pending.count('"') % 2 == 0:
+                merged.append(pending)
+                pending = None
+            continue
+
+        if trimmed.count('"') % 2 == 1 and trimmed and not trimmed.lower().startswith("@end"):
+            pending = trimmed
+            continue
+
         if merged:
             previous = merged[-1]
             if _has_arrow(previous) and not _has_arrow(trimmed) and trimmed and not trimmed.lower().startswith("@end"):
                 merged[-1] = previous.rstrip() + " " + trimmed.strip()
                 continue
         merged.append(trimmed)
+
+    if pending is not None:
+        merged.append(pending)
 
     formatted: List[str] = []
     indent = 0
