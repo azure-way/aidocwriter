@@ -6,6 +6,10 @@ import re
 from typing import Any, Dict, Tuple, Set
 
 SECTION_START_RE = re.compile(r"<!-- SECTION:(?P<id>[^:]+):START -->")
+HEADING_RE = re.compile(r"^(?P<hashes>#{1,6})\s+(?P<text>.+)$")
+HEADING_NUMBER_PREFIX_RE = re.compile(r"^\d+(?:\.\d+)*(?:\.)?\s+")
+TITLE_PAGE_START = "<!-- TITLE_PAGE_START -->"
+TITLE_PAGE_END = "<!-- TITLE_PAGE_END -->"
 
 
 def extract_sections(text: str) -> Dict[str, str]:
@@ -97,3 +101,56 @@ def find_placeholder_sections(markdown: str) -> Set[str]:
         if "content unchanged" in inner_lower or "placeholder" in inner_lower:
             placeholders.add(sid)
     return placeholders
+
+
+def number_markdown_headings(markdown: str) -> str:
+    counters = [0] * 6
+    numbered_lines: list[str] = []
+    in_title_page = False
+    in_code_block = False
+    trailing_newline = "\n" if markdown.endswith("\n") else ""
+
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_code_block = not in_code_block
+            numbered_lines.append(line)
+            continue
+        if in_code_block:
+            numbered_lines.append(line)
+            continue
+        if TITLE_PAGE_START in line:
+            in_title_page = True
+            numbered_lines.append(line)
+            continue
+        if TITLE_PAGE_END in line:
+            in_title_page = False
+            numbered_lines.append(line)
+            continue
+
+        match = HEADING_RE.match(line)
+        if not match or in_title_page:
+            numbered_lines.append(line)
+            continue
+
+        hashes = match.group("hashes")
+        level = len(hashes)
+        text = match.group("text").strip()
+        text = HEADING_NUMBER_PREFIX_RE.sub("", text, count=1).strip()
+
+        for idx in range(level - 1):
+            if counters[idx] == 0:
+                counters[idx] = 1
+        counters[level - 1] += 1
+        for idx in range(level, len(counters)):
+            counters[idx] = 0
+
+        numbering_parts = [str(counters[idx]) for idx in range(level) if counters[idx] > 0]
+        numbering = ".".join(numbering_parts)
+        if numbering:
+            numbered_line = f"{hashes} {numbering} {text}".rstrip()
+        else:
+            numbered_line = f"{hashes} {text}".rstrip()
+        numbered_lines.append(numbered_line)
+
+    return "\n".join(numbered_lines) + trailing_newline

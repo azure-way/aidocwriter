@@ -22,6 +22,7 @@ from docwriter.models import StatusEvent
 from docwriter.stage_utils import (
     find_placeholder_sections,
     merge_revised_markdown,
+    number_markdown_headings,
     parse_review_guidance,
 )
 from docwriter.storage import BlobStore
@@ -726,6 +727,7 @@ def process_finalize(data: Dict[str, Any]) -> None:
                 data.get("diagram_results", []),
                 job_id,
             )
+            final_text = number_markdown_headings(final_text)
             store.put_text(blob=f"jobs/{job_id}/final.md", text=final_text)
             pdf_bytes = export_pdf(final_text, {}, store, job_id)
             if pdf_bytes:
