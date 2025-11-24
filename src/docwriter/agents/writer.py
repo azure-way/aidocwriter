@@ -5,6 +5,7 @@ from typing import Dict, List, Any, Iterator, Optional
 
 from ..config import get_settings
 from ..llm import LLMClient, LLMMessage
+from ..plantuml_reference import PLANTUML_REFERENCE_TEXT
 
 
 @dataclass
@@ -53,7 +54,9 @@ class WriterAgent:
             "- The first non-blank line inside every PlantUML block must be a single-quote comment"
             " containing \"diagram_id: <diagram_id>\" for the matching spec.\n"
             "- Ensure that labels/fields/descriptions in diagrams have the escaped new line characters (\\n). For example: wrong: RECTANGLE Dynamics365Sales <<Azure>> as Dynamics 365 \n Sales, correct: RECTANGLE Dynamics365Sales <<Azure>> as Dynamics 365 \\n Sales\n"
-            "- Use the plantuml_prompt or description to choose actors, lifelines, and relationships.\n"
+            "- Use the plantuml_prompt or description to choose actors, lifelines, relationships, and to pick a valid PlantUML diagram type.\n"
+            "- Only emit PlantUML syntax that matches the supported patterns below (ignore unsupported formats).\n"
+            f"Supported PlantUML reference:\n{PLANTUML_REFERENCE_TEXT}\n"
         )
         if extra_guidance:
             guide += (

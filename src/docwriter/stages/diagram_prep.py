@@ -83,7 +83,7 @@ def process_diagram_prep(data: Dict[str, Any]) -> None:
     if not diagrams:
         payload = {**data, "diagram_results": []}
         send_queue_message(settings.sb_queue_finalize_ready, payload)
-        publish_stage_event("DIAGRAM", "SKIPPED", payload)
+        publish_stage_event("DIAGRAM", "SKIPPED", payload, extra={"message": "No diagrams detected"})
         publish_stage_event("FINALIZE", "QUEUED", payload)
         return
 
@@ -166,7 +166,13 @@ def process_diagram_prep(data: Dict[str, Any]) -> None:
         "finalize_payload": finalize_payload,
     }
     send_queue_message(settings.sb_queue_diagram_render, message)
-    publish_stage_event("DIAGRAM", "QUEUED", data)
+    diagram_total = len(requests)
+    queue_message = (
+        f"Queued {diagram_total} diagram{'s' if diagram_total != 1 else ''}"
+        if diagram_total
+        else "Queued diagram rendering"
+    )
+    publish_stage_event("DIAGRAM", "QUEUED", data, extra={"message": queue_message})
 
 
 def _normalize_format(fmt: str | None) -> str:

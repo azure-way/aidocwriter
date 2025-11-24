@@ -70,16 +70,17 @@ def _strip_code_fences(text: str) -> str:
 def _reformat_plantuml_text(source: str | bytes) -> str:
     normalized = _normalize_source_text(source)
     prompt = (
-        "Please reformat the following PlantUML code so that:\n"
+        "Please fix the following PlantUML code so that:\n"
+        "- The diagram compiles without errors\n"
         "- Line breaks inside element names are removed\n"
         "- Arrow labels stay on a single line\n"
         "- Indentation is consistent\n"
         "- All elements (actors, participants, lifelines, states, etc.) are clearly defined\n"
-        "- The diagram remains functionally identical\n"
+        "- The diagram remains functionally identical\n" \
         "Return only the fixed PlantUML without additional commentary or fences."
     )
     messages = [
-        LLMMessage("system", "You are an assistant that cleans and formats PlantUML diagrams."),
+        LLMMessage("system", "You are an assistant that fix, clean and formats PlantUML diagrams."),
         LLMMessage("user", f"{prompt}\n\n<plantuml>\n{normalized}\n</plantuml>"),
     ]
     try:
@@ -138,6 +139,18 @@ def process_diagram_render(data: Dict[str, Any]) -> None:
             raise DiagramRenderError("diagram_requests payload must be a list")
         try:
             store = BlobStore()
+            total_requested = len(requests)
+            start_message = (
+                f"Rendering {total_requested} diagram{'s' if total_requested != 1 else ''}"
+                if total_requested
+                else "Rendering diagrams"
+            )
+            publish_stage_event(
+                "DIAGRAM",
+                "START",
+                finalize_payload or {"job_id": job_id},
+                extra={"message": start_message},
+            )
             results: List[Dict[str, Any]] = []
             for request in requests:
                 diag_id = request.get("diagram_id") or str(uuid4())
@@ -173,11 +186,24 @@ def process_diagram_render(data: Dict[str, Any]) -> None:
             payload = {**finalize_payload, "diagram_results": results}
             payload.setdefault("job_id", job_id)
             send_queue_message(settings.sb_queue_finalize_ready, payload)
-            publish_stage_event("DIAGRAM", "DONE", payload)
+            complete_message = f"Generated {len(results)} diagram{'s' if len(results) != 1 else ''}"
+            publish_stage_event("DIAGRAM", "DONE", payload, extra={"message": complete_message})
             publish_stage_event("FINALIZE", "QUEUED", payload)
-        except DiagramRenderError:
+        except DiagramRenderError as exc:
+            publish_stage_event(
+                "DIAGRAM",
+                "FAILED",
+                {"job_id": job_id},
+                extra={"message": f"Diagram rendering failed: {exc}"},
+            )
             raise
         except Exception as exc:  # pragma: no cover - defensive
+            publish_stage_event(
+                "DIAGRAM",
+                "FAILED",
+                {"job_id": job_id},
+                extra={"message": "Unexpected diagram rendering error"},
+            )
             raise DiagramRenderError(f"unexpected rendering error: {exc}") from exc
         return
 

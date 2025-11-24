@@ -210,11 +210,20 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
   }, []);
 
   const stageOrder = useMemo(() => {
-    const order = timelineMeta?.stage_order;
-    if (Array.isArray(order) && order.every((item) => typeof item === "string")) {
-      return order as string[];
+    const canonical = SUMMARY_STAGE_ORDER;
+    const raw = timelineMeta?.stage_order;
+    const extras: string[] = [];
+    if (Array.isArray(raw)) {
+      raw.forEach((item) => {
+        if (typeof item !== "string") return;
+        const base = normalizeStageName(item).toUpperCase();
+        if (canonical.includes(base) || extras.includes(base)) {
+          return;
+        }
+        extras.push(base);
+      });
     }
-    return SUMMARY_STAGE_ORDER;
+    return [...canonical, ...extras];
   }, [timelineMeta]);
 
   const groupedTimeline = useMemo(() => {
