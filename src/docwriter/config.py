@@ -81,6 +81,8 @@ class Settings:
     blob_container: str = "docwriter"
     status_table_name: str = os.getenv("DOCWRITER_STATUS_TABLE", "DocWriterStatus")
     documents_table_name: str = os.getenv("DOCWRITER_DOCUMENTS_TABLE", "DocWriterDocuments")
+    auth0_issuer_base_url: str | None = None
+    auth0_audience: str | None = None
 
     # OpenTelemetry (optional)
     otlp_endpoint: str | None = None
@@ -122,6 +124,8 @@ class Settings:
             blob_container=env.get("AZURE_BLOB_CONTAINER", cls.blob_container),
             status_table_name=env.get("DOCWRITER_STATUS_TABLE", cls.status_table_name),
             documents_table_name=env.get("DOCWRITER_DOCUMENTS_TABLE", cls.documents_table_name),
+            auth0_issuer_base_url=env.get("AUTH0_ISSUER_BASE_URL", cls.auth0_issuer_base_url),
+            auth0_audience=env.get("AUTH0_AUDIENCE", cls.auth0_audience),
             otlp_endpoint=env.get("OTEL_EXPORTER_OTLP_ENDPOINT"),
         )
 

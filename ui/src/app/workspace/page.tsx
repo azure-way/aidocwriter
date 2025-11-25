@@ -14,7 +14,6 @@ import {
   fetchJobStatus,
   fetchJobTimeline,
   downloadArtifact,
-  getArtifactUrl,
   resumeJob,
 } from "@/lib/api";
 import {
@@ -125,7 +124,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
     if (!user?.sub) return;
     setDocumentsLoading(true);
     try {
-      const data = await fetchDocuments(user.sub);
+      const data = await fetchDocuments();
       setDocuments(data.documents ?? []);
       setDocumentsError(null);
     } catch (docErr) {
@@ -206,22 +205,20 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
     setLoading(true);
     if (!user?.sub) {
       setError("Sign in required to create a document");
+      setLoading(false);
       return;
     }
     try {
       const trimmedAnswers = Object.fromEntries(
         Object.entries(answers).map(([key, value]) => [key, value.trim()])
       );
-      const response = await createJob(
-        {
-          title: title.trim(),
-          audience: audience.trim(),
-          cycles,
-        },
-        user.sub
-      );
+      const response = await createJob({
+        title: title.trim(),
+        audience: audience.trim(),
+        cycles,
+      });
       const id = response.job_id as string;
-      await resumeJob(id, trimmedAnswers, user.sub);
+      await resumeJob(id, trimmedAnswers);
       setJobId(id);
       setStep(3);
       setTimeline([]);
@@ -510,23 +507,19 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
     [formatDuration, formatStage]
   );
 
-  const openArtifact = useCallback((path: string) => {
-    const url = getArtifactUrl(path);
-    window.open(url, "_blank", "noopener,noreferrer");
-  }, []);
-
-  const copyArtifactLink = useCallback(
+  const openArtifact = useCallback(
     async (path: string) => {
       try {
-        const url = getArtifactUrl(path);
-        await navigator.clipboard.writeText(url);
-        showNotice("Artifact link copied to clipboard");
+        const blob = await downloadArtifact(path);
+        const url = URL.createObjectURL(blob);
+        window.open(url, "_blank", "noopener,noreferrer");
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
       } catch (err) {
         console.error(err);
-        setError("Failed to copy artifact link");
+        setError("Failed to open artifact");
       }
     },
-    [showNotice]
+    []
   );
 
   const downloadArtifactFile = useCallback(
@@ -598,13 +591,6 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
                 <button
                   type="button"
                   className={buttonClass}
-                  onClick={() => copyArtifactLink(artifactPath)}
-                >
-                  Copy link
-                </button>
-                <button
-                  type="button"
-                  className={buttonClass}
                   onClick={() => downloadArtifactFile(artifactPath)}
                 >
                   Download
@@ -615,7 +601,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
         </div>
       );
     },
-    [copyArtifactLink, downloadArtifactFile, openArtifact]
+    [downloadArtifactFile, openArtifact]
   );
 
   useEffect(() => {
@@ -935,14 +921,13 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
                     Open details
                   </button>
                   {doc.artifact ? (
-                    <a
-                      href={getArtifactUrl(doc.artifact)}
+                    <button
+                      type="button"
                       className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400"
-                      target="_blank"
-                      rel="noopener noreferrer"
+                      onClick={() => downloadArtifactFile(doc.artifact!)}
                     >
                       Download artifact
-                    </a>
+                    </button>
                   ) : null}
                 </div>
               </div>

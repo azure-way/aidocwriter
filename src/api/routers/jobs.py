@@ -12,7 +12,7 @@ from docwriter.storage import BlobStore
 from docwriter.status_store import get_status_table_store
 from docwriter.document_index import get_document_index_store
 
-from ..deps import blob_store_dependency, user_id_dependency
+from ..deps import blob_store_dependency, current_user_dependency
 from ..models import (
     JobCreateRequest,
     JobCreateResponse,
@@ -81,7 +81,7 @@ def _parse_stage_message(message: str) -> dict[str, object]:
 
 
 @router.get("", response_model=DocumentListResponse)
-def list_jobs(user_id: str = Depends(user_id_dependency)) -> DocumentListResponse:
+def list_jobs(user_id: str = Depends(current_user_dependency)) -> DocumentListResponse:
     store = get_document_index_store()
     records = store.list(user_id)
     documents = [DocumentListEntry(**record) for record in records]
@@ -89,7 +89,7 @@ def list_jobs(user_id: str = Depends(user_id_dependency)) -> DocumentListRespons
 
 
 @router.post("", response_model=JobCreateResponse, status_code=status.HTTP_202_ACCEPTED)
-def create_job(payload: JobCreateRequest, user_id: str = Depends(user_id_dependency)) -> JobCreateResponse:
+def create_job(payload: JobCreateRequest, user_id: str = Depends(current_user_dependency)) -> JobCreateResponse:
     job = Job(
         title=payload.title,
         audience=payload.audience,
@@ -115,7 +115,7 @@ def resume_job(
     job_id: str,
     payload: ResumeRequest,
     store: BlobStore = Depends(blob_store_dependency),
-    user_id: str = Depends(user_id_dependency),
+    user_id: str = Depends(current_user_dependency),
 ) -> ResumeResponse:
     index_store = get_document_index_store()
     existing = index_store.get(user_id, job_id)
@@ -145,11 +145,15 @@ def resume_job(
 
 
 @router.get("/{job_id}/status", response_model=StatusResponse)
-def job_status(job_id: str) -> StatusResponse:
+def job_status(job_id: str, user_id: str = Depends(current_user_dependency)) -> StatusResponse:
     try:
         status_store = get_status_table_store()
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    index_store = get_document_index_store()
+    existing = index_store.get(user_id, job_id)
+    if existing is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found for user")
     latest = status_store.latest(job_id)
     if not latest:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found in status cache")
@@ -170,11 +174,15 @@ def job_status(job_id: str) -> StatusResponse:
 
 
 @router.get("/{job_id}/timeline", response_model=StatusTimelineResponse)
-def job_timeline(job_id: str) -> StatusTimelineResponse:
+def job_timeline(job_id: str, user_id: str = Depends(current_user_dependency)) -> StatusTimelineResponse:
     try:
         status_store = get_status_table_store()
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    index_store = get_document_index_store()
+    existing = index_store.get(user_id, job_id)
+    if existing is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found for user")
     events_raw = status_store.timeline(job_id)
     events: list[StatusEventEntry] = []
     expected_cycles = 1
@@ -238,9 +246,18 @@ def job_timeline(job_id: str) -> StatusTimelineResponse:
 def download_artifact(
     path: str,
     store: BlobStore = Depends(blob_store_dependency),
+    user_id: str = Depends(current_user_dependency),
 ) -> Response:
     if not path or path.startswith("/") or ".." in path:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid blob path")
+    parts = path.split("/")
+    if len(parts) < 2 or parts[0] != "jobs":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Malformed artifact path")
+    job_id = parts[1]
+    index_store = get_document_index_store()
+    existing = index_store.get(user_id, job_id)
+    if existing is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found for user")
     try:
         blob = store.container.get_blob_client(path)
         props = blob.get_blob_properties()

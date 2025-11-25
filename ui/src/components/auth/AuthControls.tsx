@@ -5,6 +5,11 @@ import { useUser } from "@auth0/nextjs-auth0/client";
 
 export function AuthControls() {
   const { user, error, isLoading } = useUser();
+  const audience = process.env.NEXT_PUBLIC_AUTH0_AUDIENCE;
+  const scope = process.env.NEXT_PUBLIC_AUTH0_SCOPE || "openid profile email";
+  const audienceParam = audience ? `&audience=${encodeURIComponent(audience)}` : "";
+  const scopeParam = scope ? `&scope=${encodeURIComponent(scope)}` : "";
+  const baseLogin = `/api/auth/login?returnTo=/workspace${audienceParam}${scopeParam}`;
 
   if (isLoading) {
     return (
@@ -18,13 +23,13 @@ export function AuthControls() {
     return (
       <div className="flex flex-wrap gap-3">
         <Link
-          href="/api/auth/login?returnTo=/workspace"
+          href={baseLogin}
           className="inline-flex items-center justify-center whitespace-nowrap rounded-full bg-gradient-to-r from-fuchsia-500 via-purple-500 to-sky-500 px-7 py-3 text-base font-semibold text-white shadow-[0_22px_45px_rgba(109,40,217,0.35)] transition hover:scale-105"
         >
           {error ? "Try again" : "Sign in"}
         </Link>
         <Link
-          href="/api/auth/login?screen_hint=signup&returnTo=/workspace"
+          href={`${baseLogin}&screen_hint=signup`}
           className="inline-flex items-center justify-center whitespace-nowrap rounded-full border border-white/70 px-7 py-3 text-base font-semibold text-slate-800 shadow-[0_12px_25px_rgba(15,23,42,0.15)] transition hover:bg-white"
         >
           Create account
