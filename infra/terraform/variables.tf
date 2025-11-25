@@ -84,3 +84,12 @@ variable "docker_image_version" {
   type        = string
 
 }
+variable "auth0_audience" {
+  description = "Auth0 audience for API"
+  type        = string
+}
+
+variable "auth0_issuer_base_url" {
+  description = "Auth0 issuer base URL"
+  type        = string
+}
