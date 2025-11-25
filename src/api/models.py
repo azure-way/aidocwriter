@@ -78,3 +78,17 @@ class IntakeQuestion(BaseModel):
 class IntakeQuestionsResponse(BaseModel):
     title: str
     questions: List[IntakeQuestion]
+
+
+class DocumentListEntry(BaseModel):
+    job_id: str
+    title: Optional[str] = None
+    audience: Optional[str] = None
+    stage: Optional[str] = None
+    message: Optional[str] = None
+    artifact: Optional[str] = None
+    updated: Optional[float] = None
+
+
+class DocumentListResponse(BaseModel):
+    documents: List[DocumentListEntry]

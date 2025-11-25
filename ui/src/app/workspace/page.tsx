@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GlassCard } from "@/components/GlassCard";
 import { GradientTitle } from "@/components/GradientTitle";
@@ -8,6 +9,7 @@ import { TimelineCard } from "@/components/timeline/TimelineCard";
 import { TimelineStageCard } from "@/components/timeline/TimelineStageCard";
 import {
   createJob,
+  fetchDocuments,
   fetchIntakeQuestions,
   fetchJobStatus,
   fetchJobTimeline,
@@ -26,6 +28,7 @@ import {
   stagePhaseLabel,
   TimelineEvent,
 } from "@/lib/timeline";
+import { useUser } from "@auth0/nextjs-auth0/client";
 
 interface IntakeQuestion {
   id: string;
@@ -40,6 +43,16 @@ interface StatusPayload {
   message?: string;
   cycle?: number;
   details?: Record<string, unknown> | null;
+}
+
+interface DocumentSummary {
+  job_id: string;
+  title?: string;
+  audience?: string;
+  stage?: string;
+  message?: string;
+  updated?: number;
+  artifact?: string;
 }
 
 type JobDashboardProps = {
@@ -67,6 +80,7 @@ const SUBSTEP_LABELS: Record<string, string> = {
 };
 
 export function JobDashboard({ initialJobId }: JobDashboardProps) {
+  const { user, isLoading: authLoading, error: authError } = useUser();
   const primaryButtonClass = "btn-primary";
   const inputClass = "input-glass";
   const [step, setStep] = useState<1 | 2 | 3>(initialJobId ? 3 : 1);
@@ -82,6 +96,9 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [artifactNotice, setArtifactNotice] = useState<string | null>(null);
+  const [documents, setDocuments] = useState<DocumentSummary[]>([]);
+  const [documentsLoading, setDocumentsLoading] = useState(false);
+  const [documentsError, setDocumentsError] = useState<string | null>(null);
   const noticeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const clearNotice = useCallback(() => {
@@ -103,6 +120,24 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
     },
     [clearNotice]
   );
+
+  const refreshDocuments = useCallback(async () => {
+    if (!user?.sub) return;
+    setDocumentsLoading(true);
+    try {
+      const data = await fetchDocuments(user.sub);
+      setDocuments(data.documents ?? []);
+      setDocumentsError(null);
+    } catch (docErr) {
+      setDocumentsError(docErr instanceof Error ? docErr.message : "Failed to load documents");
+    } finally {
+      setDocumentsLoading(false);
+    }
+  }, [user?.sub]);
+
+  useEffect(() => {
+    refreshDocuments();
+  }, [refreshDocuments]);
 
   useEffect(() => {
     if (!initialJobId) {
@@ -169,32 +204,57 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
   const handleSubmitAnswers = useCallback(async () => {
     setError(null);
     setLoading(true);
+    if (!user?.sub) {
+      setError("Sign in required to create a document");
+      return;
+    }
     try {
       const trimmedAnswers = Object.fromEntries(
         Object.entries(answers).map(([key, value]) => [key, value.trim()])
       );
-      const response = await createJob({
-        title: title.trim(),
-        audience: audience.trim(),
-        cycles,
-      });
+      const response = await createJob(
+        {
+          title: title.trim(),
+          audience: audience.trim(),
+          cycles,
+        },
+        user.sub
+      );
       const id = response.job_id as string;
-      await resumeJob(id, trimmedAnswers);
+      await resumeJob(id, trimmedAnswers, user.sub);
       setJobId(id);
       setStep(3);
       setTimeline([]);
       setTimelineMeta({});
       clearNotice();
+      refreshDocuments();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to submit answers");
     } finally {
       setLoading(false);
     }
-  }, [answers, title, audience, cycles, clearNotice]);
+  }, [answers, title, audience, cycles, clearNotice, refreshDocuments, user?.sub]);
 
   const disableSubmit = useMemo(() => {
     return Object.values(answers).some((ans) => !ans.trim());
   }, [answers]);
+
+  const formatDocumentTimestamp = useCallback((value?: number) => {
+    if (!value && value !== 0) return "—";
+    const date = new Date(Number(value) * 1000);
+    return date.toLocaleString();
+  }, []);
+
+  const handleSelectDocument = useCallback(
+    (doc: DocumentSummary) => {
+      setJobId(doc.job_id);
+      setStep(3);
+      setTimeline([]);
+      setTimelineMeta({});
+      clearNotice();
+    },
+    [clearNotice]
+  );
 
   const sortedTimeline = useMemo(() => {
     const copy = [...timeline];
@@ -797,6 +857,31 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
     ]
   );
 
+  if (authLoading) {
+    return (
+      <section id="intake" className="space-y-12 pb-10">
+        <GlassCard className="text-slate-600">
+          <p className="text-lg font-semibold">Checking authentication…</p>
+        </GlassCard>
+      </section>
+    );
+  }
+
+  if (!user) {
+    return (
+      <section id="intake" className="space-y-12 pb-10">
+        <GlassCard className="space-y-4 text-slate-800">
+          <h2 className="text-2xl font-semibold text-slate-900">Sign in required</h2>
+          <p className="text-slate-600">Your session expired. Please sign in again to continue.</p>
+          <Link href="/api/auth/login?returnTo=/workspace" className="btn-primary w-full sm:w-auto">
+            Go to sign in
+          </Link>
+          {authError ? <p className="text-sm text-red-500">{authError.message}</p> : null}
+        </GlassCard>
+      </section>
+    );
+  }
+
   return (
     <section id="intake" className="space-y-12 pb-10">
       {error ? (
@@ -804,6 +889,69 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
           <p className="text-sm">{error}</p>
         </GlassCard>
       ) : null}
+
+      <GlassCard className="space-y-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-[0.4em] text-slate-500">Documents</p>
+            <h2 className="text-2xl font-semibold text-slate-900">Your document workspace</h2>
+            <p className="text-sm text-slate-500">Select an existing document to view details or start a new one.</p>
+          </div>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => {
+              setJobId(null);
+              setStep(1);
+            }}
+          >
+            Create new document
+          </button>
+        </div>
+        {documentsError ? <p className="text-sm text-red-500">{documentsError}</p> : null}
+        {documentsLoading ? (
+          <p className="text-sm text-slate-500">Loading documents…</p>
+        ) : documents.length ? (
+          <div className="space-y-3">
+            {documents.map((doc) => (
+              <div
+                key={doc.job_id}
+                className="flex flex-col gap-3 rounded-2xl border border-slate-100/80 bg-white/70 px-4 py-4 text-slate-800 shadow-[0_15px_50px_rgba(15,23,42,0.08)] sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div>
+                  <p className="text-base font-semibold text-slate-900">{doc.title || "Untitled document"}</p>
+                  <p className="text-sm text-slate-500">{doc.message || "No updates yet"}</p>
+                </div>
+                <div className="flex flex-col gap-1 text-sm text-slate-500 sm:flex-row sm:items-center sm:gap-6">
+                  <span className="font-semibold text-slate-800">{doc.stage || "—"}</span>
+                  <span>{formatDocumentTimestamp(doc.updated)}</span>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400"
+                    onClick={() => handleSelectDocument(doc)}
+                  >
+                    Open details
+                  </button>
+                  {doc.artifact ? (
+                    <a
+                      href={getArtifactUrl(doc.artifact)}
+                      className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Download artifact
+                    </a>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-500">No documents yet. Start by creating a new document.</p>
+        )}
+      </GlassCard>
 
       {step === 1 && (
         <div className="space-y-8 rounded-[32px] border border-white/25 bg-gradient-to-br from-slate-900 via-blue-900 to-sky-800 px-10 py-10 text-white shadow-[0_45px_140px_rgba(15,23,42,0.45)]">

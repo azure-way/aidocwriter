@@ -166,6 +166,10 @@ def _stage_completed_event(
     details = {k: v for k, v in details.items() if v is not None}
     details = _with_cycle_metadata(details, source, cycle_idx=timing.cycle)
     extra = {"details": details} if details else {}
+    user_id = source.get("user_id") if source else None
+    if user_id:
+        extra = extra or {}
+        extra["user_id"] = user_id
     return StatusEvent(
         job_id=job_id,
         stage=f"{stage}_DONE",

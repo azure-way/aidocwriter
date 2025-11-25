@@ -35,6 +35,7 @@ class Job:
     out: str = ""
     job_id: str | None = None
     cycles: int = 1
+    user_id: str | None = None
 
 
 def _sb_check():
@@ -77,6 +78,7 @@ def send_job(job: Job) -> str:
         "audience": job.audience,
         "out": blob_path,
         "cycles": max(1, int(job.cycles)),
+        "user_id": job.user_id,
     }
     try:
         store = BlobStore()
@@ -85,6 +87,7 @@ def send_job(job: Job) -> str:
             "title": job.title,
             "audience": job.audience,
             "out": blob_path,
+            "user_id": job.user_id,
         }
         store.put_text(
             blob=f"jobs/{job_id}/intake/context.json",
@@ -120,7 +123,8 @@ def send_job(job: Job) -> str:
                     "expected_cycles": job.cycles,
                     "cycles_remaining": job.cycles,
                     "cycles_completed": 0,
-                }
+                },
+                "user_id": job.user_id,
             },
         ).to_payload()
     )
@@ -134,9 +138,9 @@ def send_job(job: Job) -> str:
     )
     return job_id
 
-def send_resume(job_id: str) -> None:
+def send_resume(job_id: str, user_id: str | None = None) -> None:
     settings = get_settings()
-    payload: Dict[str, Any] = {"job_id": job_id}
+    payload: Dict[str, Any] = {"job_id": job_id, "user_id": user_id}
     try:
         store = BlobStore()
         context_text = store.get_text(blob=f"jobs/{job_id}/intake/context.json")
@@ -148,6 +152,7 @@ def send_resume(job_id: str) -> None:
                     "audience": context.get("audience"),
                     "out": context.get("out"),
                     "cycles": context.get("cycles"),
+                    "user_id": context.get("user_id", user_id),
                 }
             )
     except Exception as exc:

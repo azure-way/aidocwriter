@@ -9,6 +9,7 @@ from azure.data.tables import TableServiceClient
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 
 from .config import get_settings
+from .document_index import get_document_index_store
 
 _lock = threading.Lock()
 _store: Optional["StatusTableStore"] = None
@@ -62,6 +63,21 @@ class StatusTableStore:
         history_entity["RowKey"] = _history_row_key(ts, payload.get("stage"))
         history_entity["is_latest"] = False
         self._table.upsert_entity(entity=history_entity, mode="replace")
+
+        user_id = payload.get("user_id")
+        if isinstance(user_id, str) and user_id:
+            try:
+                index_store = get_document_index_store()
+                index_store.upsert(
+                    user_id,
+                    job_id,
+                    stage=payload.get("stage"),
+                    message=payload.get("message"),
+                    artifact=payload.get("artifact"),
+                    updated=ts,
+                )
+            except Exception:
+                pass
 
     def latest(self, job_id: str) -> Optional[Dict[str, Any]]:
         try:

@@ -80,6 +80,7 @@ class Settings:
     blob_connection_string: str | None = None
     blob_container: str = "docwriter"
     status_table_name: str = os.getenv("DOCWRITER_STATUS_TABLE", "DocWriterStatus")
+    documents_table_name: str = os.getenv("DOCWRITER_DOCUMENTS_TABLE", "DocWriterDocuments")
 
     # OpenTelemetry (optional)
     otlp_endpoint: str | None = None
@@ -120,6 +121,7 @@ class Settings:
             blob_connection_string=env.get("AZURE_STORAGE_CONNECTION_STRING"),
             blob_container=env.get("AZURE_BLOB_CONTAINER", cls.blob_container),
             status_table_name=env.get("DOCWRITER_STATUS_TABLE", cls.status_table_name),
+            documents_table_name=env.get("DOCWRITER_DOCUMENTS_TABLE", cls.documents_table_name),
             otlp_endpoint=env.get("OTEL_EXPORTER_OTLP_ENDPOINT"),
         )
 

@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import json
 import re
+import time
+
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from azure.core.exceptions import ResourceNotFoundError, HttpResponseError
 
 from docwriter.queue import Job, send_job, send_resume
 from docwriter.storage import BlobStore
 from docwriter.status_store import get_status_table_store
+from docwriter.document_index import get_document_index_store
 
-from ..deps import blob_store_dependency
+from ..deps import blob_store_dependency, user_id_dependency
 from ..models import (
     JobCreateRequest,
     JobCreateResponse,
@@ -19,6 +22,8 @@ from ..models import (
     BlobDownloadResponse,
     StatusTimelineResponse,
     StatusEventEntry,
+    DocumentListEntry,
+    DocumentListResponse,
 )
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -75,14 +80,33 @@ def _parse_stage_message(message: str) -> dict[str, object]:
     return data
 
 
+@router.get("", response_model=DocumentListResponse)
+def list_jobs(user_id: str = Depends(user_id_dependency)) -> DocumentListResponse:
+    store = get_document_index_store()
+    records = store.list(user_id)
+    documents = [DocumentListEntry(**record) for record in records]
+    return DocumentListResponse(documents=documents)
+
+
 @router.post("", response_model=JobCreateResponse, status_code=status.HTTP_202_ACCEPTED)
-def create_job(payload: JobCreateRequest) -> JobCreateResponse:
+def create_job(payload: JobCreateRequest, user_id: str = Depends(user_id_dependency)) -> JobCreateResponse:
     job = Job(
         title=payload.title,
         audience=payload.audience,
         cycles=payload.cycles,
+        user_id=user_id,
     )
     job_id = send_job(job)
+    index_store = get_document_index_store()
+    index_store.upsert(
+        user_id,
+        job_id,
+        title=payload.title,
+        audience=payload.audience,
+        stage="ENQUEUED",
+        message="Job submitted",
+        updated=time.time(),
+    )
     return JobCreateResponse(job_id=job_id)
 
 
@@ -91,7 +115,12 @@ def resume_job(
     job_id: str,
     payload: ResumeRequest,
     store: BlobStore = Depends(blob_store_dependency),
+    user_id: str = Depends(user_id_dependency),
 ) -> ResumeResponse:
+    index_store = get_document_index_store()
+    existing = index_store.get(user_id, job_id)
+    if existing is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found for user")
     blob_path = f"jobs/{job_id}/intake/answers.json"
     if payload.answers is not None:
         store.put_text(blob=blob_path, text=json.dumps(payload.answers, indent=2))
@@ -104,7 +133,14 @@ def resume_job(
                 detail="No answers found. Provide 'answers' in the request body.",
             ) from exc
 
-    send_resume(job_id)
+    index_store.upsert(
+        user_id,
+        job_id,
+        stage="INTAKE_READY",
+        message="Resume requested",
+        updated=time.time(),
+    )
+    send_resume(job_id, user_id=user_id)
     return ResumeResponse(job_id=job_id, message="Resume signal sent")
 
 

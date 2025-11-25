@@ -1,6 +1,6 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL;
 
-async function request(path: string, options: RequestInit = {}) {
+async function request(path: string, options: RequestInit = {}, userId?: string) {
   if (!API_BASE) {
     throw new Error("NEXT_PUBLIC_API_BASE_URL is not set");
   }
@@ -9,6 +9,7 @@ async function request(path: string, options: RequestInit = {}) {
     ...options,
     headers: {
       "Content-Type": "application/json",
+      ...(userId ? { "X-User-Id": userId } : {}),
       ...(options.headers || {}),
     },
     cache: "no-store",
@@ -47,18 +48,26 @@ export async function fetchIntakeQuestions(title: string) {
   });
 }
 
-export async function createJob(payload: { title: string; audience: string; cycles: number }) {
-  return request("/jobs", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+export async function createJob(payload: { title: string; audience: string; cycles: number }, userId: string) {
+  return request(
+    "/jobs",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    userId
+  );
 }
 
-export async function resumeJob(jobId: string, answers: Record<string, unknown>) {
-  return request(`/jobs/${jobId}/resume`, {
-    method: "POST",
-    body: JSON.stringify({ answers }),
-  });
+export async function resumeJob(jobId: string, answers: Record<string, unknown>, userId: string) {
+  return request(
+    `/jobs/${jobId}/resume`,
+    {
+      method: "POST",
+      body: JSON.stringify({ answers }),
+    },
+    userId
+  );
 }
 
 export async function fetchJobStatus(jobId: string) {
@@ -67,4 +76,8 @@ export async function fetchJobStatus(jobId: string) {
 
 export async function fetchJobTimeline(jobId: string) {
   return request(`/jobs/${jobId}/timeline`);
+}
+
+export async function fetchDocuments(userId: string) {
+  return request("/jobs", {}, userId);
 }

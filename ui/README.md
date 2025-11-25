@@ -1,36 +1,48 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+## DocWriter UI
 
-## Getting Started
+This Next.js app powers the DocWriter marketing pages and the authenticated workspace. The UI now relies on Auth0 for identity and talks to the API tier through the environment-configured base URL.
 
-First, run the development server:
+## Prerequisites
+
+- Node.js 18+
+- Auth0 tenant with a Regular Web Application
+- API endpoint for DocWriter (`NEXT_PUBLIC_API_BASE_URL`)
+
+## Environment variables
+
+Create a `.env.local` in this folder using `.env.example` as a template:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.example .env.local
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Fill in the following values:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Variable | Description |
+| --- | --- |
+| `NEXT_PUBLIC_API_BASE_URL` | Base URL for the FastAPI backend used by `/lib/api.ts`. |
+| `AUTH0_SECRET` | 32+ char random value used to encrypt Auth0 session cookies. |
+| `AUTH0_BASE_URL` | Public URL for this UI (e.g., `http://localhost:3000`). |
+| `AUTH0_ISSUER_BASE_URL` | Auth0 tenant domain, e.g., `https://your-tenant.us.auth0.com`. |
+| `AUTH0_CLIENT_ID` / `AUTH0_CLIENT_SECRET` | Credentials for the Auth0 Regular Web App. |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Add these URLs to your Auth0 application settings:
 
-## Learn More
+- **Allowed Callback URLs:** `http://localhost:3000/api/auth/callback`
+- **Allowed Logout URLs:** `http://localhost:3000`
+- **Allowed Web Origins:** `http://localhost:3000`
 
-To learn more about Next.js, take a look at the following resources:
+## Useful commands
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+# install deps
+npm install
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+# run dev server
+npm run dev
 
-## Deploy on Vercel
+# lint
+npm run lint
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Open [http://localhost:3000](http://localhost:3000) to browse the marketing pages. “Sign in” and “Create account” CTAs redirect to Auth0 Universal Login; upon success you’re returned to `/workspace`, and the header reflects the active session.
