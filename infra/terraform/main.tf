@@ -160,7 +160,7 @@ module "app" {
   }
 
   api_ports = {
-    api      = 80
+    api      = 8000
     plantuml = 8080
   }
 
