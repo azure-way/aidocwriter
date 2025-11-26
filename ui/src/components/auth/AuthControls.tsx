@@ -6,7 +6,7 @@ import { useUser } from "@auth0/nextjs-auth0/client";
 export function AuthControls() {
   const { user, error, isLoading } = useUser();
   const audience = process.env.NEXT_PUBLIC_AUTH0_AUDIENCE;
-  const scope = process.env.NEXT_PUBLIC_AUTH0_SCOPE || "openid profile email";
+  const scope = process.env.NEXT_PUBLIC_AUTH0_SCOPE || "openid profile email api";
   const audienceParam = audience ? `&audience=${encodeURIComponent(audience)}` : "";
   const scopeParam = scope ? `&scope=${encodeURIComponent(scope)}` : "";
   const baseLogin = `/api/auth/login?returnTo=/workspace${audienceParam}${scopeParam}`;

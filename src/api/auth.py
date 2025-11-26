@@ -50,10 +50,10 @@ def verify_token(token: str) -> Dict[str, Any]:
             key,
             algorithms=["RS256"],
             audience=audience,
-            issuer=issuer.rstrip("/"),
+            issuer=issuer,
         )
     except Exception as exc:  # pragma: no cover
-        raise AuthError("Token validation failed") from exc
+      raise AuthError("Token validation failed") from exc
     return payload
 
 

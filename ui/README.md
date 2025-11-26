@@ -25,6 +25,8 @@ Fill in the following values:
 | `AUTH0_BASE_URL` | Public URL for this UI (e.g., `http://localhost:3000`). |
 | `AUTH0_ISSUER_BASE_URL` | Auth0 tenant domain, e.g., `https://your-tenant.us.auth0.com`. |
 | `AUTH0_CLIENT_ID` / `AUTH0_CLIENT_SECRET` | Credentials for the Auth0 Regular Web App. |
+| `AUTH0_AUDIENCE` | API identifier requested during login/token refresh (same value as public audience). |
+| `AUTH0_SCOPE` | Default scopes requested by the server-side SDK (e.g., `openid profile email api`). |
 | `NEXT_PUBLIC_AUTH0_AUDIENCE` | API identifier configured in Auth0 so the access token carries your backend audience. |
 | `NEXT_PUBLIC_AUTH0_SCOPE` | Optional scopes requested when logging in (default `openid profile email`). |
 

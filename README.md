@@ -187,6 +187,42 @@ config/
 ```
 Documentation and deployment scripts will be updated as those components land.
 
+## Delivery Phases Completed
+
+1. **Phase 1 – Marketing & Routing Refresh**
+   - Split the Next.js app into public pages (`/`, `/features`) and an authenticated `/workspace` route.
+   - Introduced the glassy global navigation, new hero sections, and updated CTAs for “Explore workspace” and “Create document.”
+   - Rewrote the home/feature/workspace hero copy, ensuring benefits/capabilities live in unified gradient sections.
+
+2. **Phase 2 – Auth0 Universal Login Integration**
+   - Replaced the ad-hoc Lock flow with the official `@auth0/nextjs-auth0` SDK, including `/api/auth/[auth0]`, middleware, and `/api/auth/token` helper.
+   - Header auth controls now rely on `useUser`, handle sign-in/sign-up links with audience/scope params, and show profile chips when authenticated.
+   - All FastAPI routes validate Auth0 access tokens (issuer/audience/JWKS) and derive the user ID from the token instead of headers.
+
+3. **Phase 3 – Workspace Document Hub**
+   - Added an Azure Table–backed `DocumentIndexStore` and REST listing endpoint (`GET /jobs`) scoped to each Auth0 subject.
+   - The workspace landing page now shows a document list (status, last update, artifact download) plus quick “Create new document” entry and detail selection.
+   - Job creation/resume/status/timeline/artifact download flows include the access token automatically and refresh the document list when state changes.
+
+### Upcoming Phases
+- **Phase 4 – Document Lifecycle Actions**
+  - Persist and display per-document metadata (review cycle counts, artifact versions, error states).
+  - Allow pausing/canceling jobs, manual retries, and per-stage logs.
+  - Add filtering/search to the workspace hub.
+
+- **Phase 5 – Collaboration & Sharing**
+  - Introduce document sharing (invite other Auth0 users, read-only/public links).
+  - Add comments/activity feed per document.
+  - Expose webhook or Teams/Slack notifications for stage transitions.
+
+- **Phase 6 – Advanced Outputs & Integrations**
+  - Support additional export formats (HTML bundle, Confluence, SharePoint).
+  - Provide “publish to repo” integration (GitHub/Azure DevOps) with PR automation.
+  - Build a Zapier-compatible REST surface for automated downstream workflows.
+
+These phases are not implemented yet; they outline the roadmap for future sessions.
+Future phases will extend the hub with richer metadata, filtering, and collaborative features.
+
 Diagrams
 - The plan/review stages emit PlantUML blocks (` ```plantuml` or `@startuml…@enduml`).
 - Diagram-prep extracts these blocks and the diagram-render worker calls your PlantUML server (`PLANTUML_SERVER_URL`), storing PNG/SVG files under `jobs/<job_id>/images/`.
