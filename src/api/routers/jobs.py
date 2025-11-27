@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Response
 from azure.core.exceptions import ResourceNotFoundError, HttpResponseError
 
 from docwriter.queue import Job, send_job, send_resume
-from docwriter.storage import BlobStore
+from docwriter.storage import BlobStore, JobStoragePaths
 from docwriter.status_store import get_status_table_store
 from docwriter.document_index import get_document_index_store
 
@@ -121,7 +121,8 @@ def resume_job(
     existing = index_store.get(user_id, job_id)
     if existing is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found for user")
-    blob_path = f"jobs/{job_id}/intake/answers.json"
+    job_paths = JobStoragePaths(user_id=user_id, job_id=job_id)
+    blob_path = job_paths.intake("answers.json")
     if payload.answers is not None:
         store.put_text(blob=blob_path, text=json.dumps(payload.answers, indent=2))
     else:

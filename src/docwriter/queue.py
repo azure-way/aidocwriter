@@ -14,7 +14,7 @@ from .agents.reviewer import ReviewerAgent
 from .agents.verifier import VerifierAgent
 from .summary import Summarizer
 from .graph import build_dependency_graph
-from .storage import BlobStore
+from .storage import BlobStore, JobStoragePaths
 from .telemetry import track_event, track_exception
 from .agents.interviewer import InterviewerAgent
 from .agents.style_reviewer import StyleReviewerAgent
@@ -66,12 +66,15 @@ def _status_stage_event(
 
 def send_job(job: Job) -> str:
     job_id = job.job_id or str(uuid.uuid4())
+    if not job.user_id:
+        raise ValueError("job.user_id is required to enqueue a job")
+    job_paths = JobStoragePaths(user_id=job.user_id, job_id=job_id)
     try:
         store = BlobStore()
-        blob_path = store.allocate_document_blob(job_id)
+        blob_path = store.allocate_document_blob(job_id, job.user_id)
     except Exception as exc:
         track_exception(exc, {"job_id": job_id, "operation": "allocate_document_blob"})
-        blob_path = job.out or f"/tmp/{job_id}_document.md"
+        blob_path = job.out or job_paths.draft()
     payload = {
         "job_id": job_id,
         "title": job.title,
@@ -90,7 +93,7 @@ def send_job(job: Job) -> str:
             "user_id": job.user_id,
         }
         store.put_text(
-            blob=f"jobs/{job_id}/intake/context.json",
+            blob=job_paths.intake("context.json"),
             text=json.dumps(context_snapshot, indent=2),
         )
     except Exception as exc:
@@ -140,10 +143,14 @@ def send_job(job: Job) -> str:
 
 def send_resume(job_id: str, user_id: str | None = None) -> None:
     settings = get_settings()
+    if not user_id:
+        raise ValueError(f"user_id is required to resume job {job_id}")
+    job_paths = JobStoragePaths(user_id=user_id, job_id=job_id)
     payload: Dict[str, Any] = {"job_id": job_id, "user_id": user_id}
     try:
         store = BlobStore()
-        context_text = store.get_text(blob=f"jobs/{job_id}/intake/context.json")
+        context_blob = job_paths.intake("context.json")
+        context_text = store.get_text(blob=context_blob)
         context = json.loads(context_text)
         if isinstance(context, dict):
             payload.update(
@@ -157,12 +164,13 @@ def send_resume(job_id: str, user_id: str | None = None) -> None:
             )
     except Exception as exc:
         track_exception(exc, {"job_id": job_id, "operation": "load_intake_context"})
+    resolved_user_id = payload.get("user_id") or user_id
     if not isinstance(payload.get("out"), str) or not payload.get("out"):
         try:
-            payload["out"] = BlobStore().allocate_document_blob(job_id)
+            payload["out"] = BlobStore().allocate_document_blob(job_id, resolved_user_id)
         except Exception as exc:
             track_exception(exc, {"job_id": job_id, "operation": "allocate_document_blob_resume"})
-            payload["out"] = f"/tmp/{job_id}_document.md"
+            payload["out"] = JobStoragePaths(user_id=resolved_user_id, job_id=job_id).draft()
     
     ensure_cycle_state(payload)
     if payload.get("cycles") is None and payload.get("expected_cycles") is None:
@@ -174,82 +182,6 @@ def send_resume(job_id: str, user_id: str | None = None) -> None:
         payload,
     )
     track_event("job_resume_signal", {"job_id": job_id})
-
-
-def worker_plan() -> None:
-    worker_configure_logging("worker-plan")
-    settings = _sb_check()
-    planner = PlannerAgent()
-
-    def handle(_msg, data: Dict[str, Any]):
-        process_plan(data, planner)
-
-    worker_run_processor(settings.sb_queue_plan, handle, stage_name="PLAN")
-
-
-def worker_write() -> None:
-    worker_configure_logging("worker-write")
-    settings = _sb_check()
-    writer = WriterAgent()
-    summarizer = Summarizer()
-
-    def handle(_msg, data: Dict[str, Any]):
-        process_write(data, writer, summarizer)
-
-    worker_run_processor(settings.sb_queue_write, handle, stage_name="WRITE")
-
-
-def worker_review() -> None:
-    worker_configure_logging("worker-review")
-    settings = _sb_check()
-    reviewer = ReviewerAgent()
-
-    def handle(_msg, data: Dict[str, Any]):
-        process_review(data, reviewer)
-
-    worker_run_processor(settings.sb_queue_review, handle, stage_name="REVIEW")
-
-
-def worker_verify() -> None:
-    worker_configure_logging("worker-verify")
-    settings = _sb_check()
-    verifier = VerifierAgent()
-
-    def handle(_msg, data: Dict[str, Any]):
-        process_verify(data, verifier)
-
-    worker_run_processor(settings.sb_queue_verify, handle, stage_name="VERIFY")
-
-
-def worker_rewrite() -> None:
-    worker_configure_logging("worker-rewrite")
-    settings = _sb_check()
-    writer = WriterAgent()
-
-    def handle(_msg, data: Dict[str, Any]):
-        process_rewrite(data, writer)
-
-    worker_run_processor(settings.sb_queue_rewrite, handle, stage_name="REWRITE")
-
-
-def worker_diagram_prep() -> None:
-    worker_configure_logging("worker-diagram-prep")
-    settings = _sb_check()
-
-    def handle(_msg, data: Dict[str, Any]):
-        process_diagram_prep(data)
-
-    worker_run_processor(settings.sb_queue_diagram_prep, handle, stage_name="DIAGRAM")
-
-
-def worker_finalize() -> None:
-    worker_configure_logging("worker-finalize")
-    settings = _sb_check()
-
-    def handle(_msg, data: Dict[str, Any]):
-        process_finalize(data)
-
-    worker_run_processor(settings.sb_queue_finalize_ready, handle, stage_name="FINALIZE")
 
 
 # Exposed per-stage processors for E2E tests and direct invocation

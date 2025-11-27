@@ -88,6 +88,10 @@ class DocumentListEntry(BaseModel):
     message: Optional[str] = None
     artifact: Optional[str] = None
     updated: Optional[float] = None
+    cycles_requested: Optional[int] = None
+    cycles_completed: Optional[int] = None
+    has_error: Optional[bool] = None
+    last_error: Optional[str] = None
 
 
 class DocumentListResponse(BaseModel):

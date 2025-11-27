@@ -11,7 +11,7 @@ try:
 except Exception:  # pragma: no cover
     requests = None  # type: ignore
 
-from .storage import BlobStore
+from .storage import BlobStore, JobStoragePaths
 
 MERMAID_BLOCK_RE = re.compile(r"```mermaid\s+([\s\S]*?)```", re.IGNORECASE)
 IMAGE_PATTERN = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
@@ -21,7 +21,7 @@ SLUG_SEP_RE = re.compile(r"[\s\-]+")
 
 def replace_mermaid_with_images(
     markdown: str,
-    job_id: str,
+    job_paths: JobStoragePaths,
     store: BlobStore,
 ) -> Tuple[str, Dict[str, bytes]]:
     if "```mermaid" not in markdown:
@@ -55,12 +55,12 @@ def replace_mermaid_with_images(
             return match.group(0)
         idx = len(images) + 1
         rel_path = f"images/diagram_{idx}.png"
-        blob_path = f"jobs/{job_id}/{rel_path}"
+        blob_path = job_paths.images(f"diagram_{idx}.png")
         try:
             store.put_bytes(blob=blob_path, data_bytes=rendered)
             images[rel_path] = rendered
         except Exception:
-            logging.exception("Failed to upload mermaid diagram %s for job %s", idx, job_id)
+            logging.exception("Failed to upload mermaid diagram %s for job %s", idx, job_paths.job_id)
             return match.group(0)
         return f"![Diagram {idx}]({rel_path})"
 
@@ -72,7 +72,7 @@ def export_pdf(
     markdown: str,
     image_map: Dict[str, bytes],
     store: BlobStore,
-    job_id: str,
+    job_paths: JobStoragePaths,
 ) -> Optional[bytes]:
     try:
         html = _markdown_to_html(markdown)
@@ -85,7 +85,7 @@ def export_pdf(
 
     def _replace_src(match: re.Match[str]) -> str:
         src = match.group(1)
-        data = _resolve_image_bytes(src, image_map, store, job_id)
+        data = _resolve_image_bytes(src, image_map, store, job_paths)
         if data is None:
             return match.group(0)
         encoded = base64.b64encode(data).decode("ascii")
@@ -96,7 +96,7 @@ def export_pdf(
     try:
         return HTML(string=html).write_pdf()
     except Exception:
-        logging.exception("Failed to render PDF for job %s", job_id)
+        logging.exception("Failed to render PDF for job %s", job_paths.job_id)
         return None
 
 
@@ -104,7 +104,7 @@ def export_docx(
     markdown: str,
     image_map: Dict[str, bytes],
     store: BlobStore,
-    job_id: str,
+    job_paths: JobStoragePaths,
 ) -> Optional[bytes]:
     try:
         from docx import Document  # type: ignore
@@ -116,7 +116,7 @@ def export_docx(
     doc = Document()
 
     def _add_image(image_src: str) -> None:
-        data = _resolve_image_bytes(image_src, image_map, store, job_id)
+        data = _resolve_image_bytes(image_src, image_map, store, job_paths)
         if data is None:
             logging.warning("Image %s not found for DOCX export", image_src)
             return
@@ -168,7 +168,7 @@ def export_docx(
         doc.save(buffer)
         return buffer.getvalue()
     except Exception:
-        logging.exception("Failed to write DOCX for job %s", job_id)
+        logging.exception("Failed to write DOCX for job %s", job_paths.job_id)
         return None
 
 
@@ -248,7 +248,7 @@ def _resolve_image_bytes(
     src: str,
     image_map: Dict[str, bytes],
     store: BlobStore,
-    job_id: str,
+    job_paths: JobStoragePaths,
 ) -> Optional[bytes]:
     normalized = src.lstrip("./")
     data = image_map.get(normalized)
@@ -256,7 +256,7 @@ def _resolve_image_bytes(
         return data
     if normalized.startswith("http://") or normalized.startswith("https://"):
         return None
-    blob_path = normalized if normalized.startswith("jobs/") else f"jobs/{job_id}/{normalized}"
+    blob_path = normalized if normalized.startswith("jobs/") else job_paths.relative(normalized)
     try:
         return store.get_bytes(blob_path)
     except Exception:

@@ -7,7 +7,7 @@ from uuid import uuid4
 from .config import get_settings
 from .llm import LLMClient, LLMMessage
 from .messaging import publish_stage_event, send_queue_message
-from .storage import BlobStore
+from .storage import BlobStore, JobStoragePaths
 
 
 class DiagramRenderError(RuntimeError):
@@ -130,6 +130,10 @@ def process_diagram_render(data: Dict[str, Any]) -> None:
     job_id = data.get("job_id")
     if not job_id:
         raise DiagramRenderError("diagram render payload missing job_id")
+    user_id = data.get("user_id")
+    if not user_id:
+        raise DiagramRenderError(f"diagram render payload missing user_id for job {job_id}")
+    job_paths = JobStoragePaths(user_id=user_id, job_id=job_id)
 
     if "diagram_requests" in data:
         finalize_payload = data.get("finalize_payload") or {}
@@ -148,14 +152,14 @@ def process_diagram_render(data: Dict[str, Any]) -> None:
             publish_stage_event(
                 "DIAGRAM",
                 "START",
-                finalize_payload or {"job_id": job_id},
+                finalize_payload or {"job_id": job_id, "user_id": user_id},
                 extra={"message": start_message},
             )
             results: List[Dict[str, Any]] = []
             for request in requests:
                 diag_id = request.get("diagram_id") or str(uuid4())
                 fmt = _normalize_format(request.get("format"))
-                blob_path = request.get("blob_path") or f"jobs/{job_id}/images/{diag_id}.{fmt}"
+                blob_path = request.get("blob_path") or job_paths.images(f"{diag_id}.{fmt}")
                 source_path = request.get("source_path")
                 if not source_path:
                     raise DiagramRenderError(f"diagram {diag_id} missing source_path")
@@ -169,7 +173,7 @@ def process_diagram_render(data: Dict[str, Any]) -> None:
                 content = _render_with_plantuml(formatted_source, fmt)
                 store.put_bytes(blob=blob_path, data_bytes=content)
                 relative_path = blob_path
-                prefix = f"jobs/{job_id}/"
+                prefix = f"{job_paths.root}/"
                 if blob_path.startswith(prefix):
                     relative_path = blob_path[len(prefix) :]
                 code_block_map = code_blocks if isinstance(code_blocks, dict) else {}
@@ -185,6 +189,7 @@ def process_diagram_render(data: Dict[str, Any]) -> None:
                 )
             payload = {**finalize_payload, "diagram_results": results}
             payload.setdefault("job_id", job_id)
+            payload.setdefault("user_id", user_id)
             send_queue_message(settings.sb_queue_finalize_ready, payload)
             complete_message = f"Generated {len(results)} diagram{'s' if len(results) != 1 else ''}"
             publish_stage_event("DIAGRAM", "DONE", payload, extra={"message": complete_message})
@@ -193,7 +198,7 @@ def process_diagram_render(data: Dict[str, Any]) -> None:
             publish_stage_event(
                 "DIAGRAM",
                 "FAILED",
-                {"job_id": job_id},
+                {"job_id": job_id, "user_id": user_id},
                 extra={"message": f"Diagram rendering failed: {exc}"},
             )
             raise
@@ -201,7 +206,7 @@ def process_diagram_render(data: Dict[str, Any]) -> None:
             publish_stage_event(
                 "DIAGRAM",
                 "FAILED",
-                {"job_id": job_id},
+                {"job_id": job_id, "user_id": user_id},
                 extra={"message": "Unexpected diagram rendering error"},
             )
             raise DiagramRenderError(f"unexpected rendering error: {exc}") from exc
@@ -229,7 +234,7 @@ def process_diagram_render(data: Dict[str, Any]) -> None:
     content = _render_with_plantuml(formatted_source, fmt)
 
     try:
-        blob_path = data.get("blob_path") or f"jobs/{job_id}/images/{diagram_id}.{fmt}"
+        blob_path = data.get("blob_path") or job_paths.images(f"{diagram_id}.{fmt}")
         (store or BlobStore()).put_bytes(blob=blob_path, data_bytes=content)
     except Exception as exc:  # pragma: no cover - defensive
         raise DiagramRenderError(f"unexpected rendering error: {exc}") from exc

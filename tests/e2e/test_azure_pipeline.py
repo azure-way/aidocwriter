@@ -18,7 +18,7 @@ from docwriter.queue import (
 )
 from docwriter.stages.diagram_prep import process_diagram_prep
 from docwriter.diagram_renderer import process_diagram_render
-from docwriter.storage import BlobStore
+from docwriter.storage import BlobStore, JobStoragePaths
 from docwriter.config import get_settings
 
 
@@ -72,13 +72,16 @@ def test_e2e_local_pipeline(monkeypatch):
 
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "doc.md"
+        user_id = "test-user"
         job_data = {
             "job_id": "local-test",
             "title": "Microsoft Dynamics 365 integrations with external systems",
             "audience": "Integration architects",
             "out": str(out),
             "cycles": 1,
+            "user_id": user_id,
         }
+        job_paths = JobStoragePaths(user_id=user_id, job_id=job_data["job_id"])
 
         # Intake
         process_plan_intake(job_data)
@@ -98,14 +101,14 @@ def test_e2e_local_pipeline(monkeypatch):
             "diagrams": "High-level architecture diagram showing Dynamics 365, middleware (Logic Apps/Service Bus), and external systems; sequence diagram for message flow",
             "context": "Global manufacturing enterprise modernizing integrations while maintaining SAP and Salesforce back-end connectivity.",
         }
-        store.put_text(blob=f"jobs/{job_data['job_id']}/intake/answers.json", text=json.dumps(answers))
+        store.put_text(blob=job_paths.intake("answers.json"), text=json.dumps(answers))
         print("[INTAKE] Answers uploaded to Blob Storage")
 
         # Planning
         process_plan(payload)
         payload = pop_payload(settings.sb_queue_write)
         print("[PLAN] Plan generated and queued for writing")
-        plan = json.loads(store.get_text(f"jobs/{job_data['job_id']}/plan.json"))
+        plan = json.loads(store.get_text(job_paths.plan()))
         payload["plan"] = plan
         payload["dependency_summaries"] = {}
 
@@ -138,7 +141,7 @@ def test_e2e_local_pipeline(monkeypatch):
             print("[FINALIZE] Final document stored in Blob Storage")
             break
 
-        final_md = store.get_text(f"jobs/{job_data['job_id']}/final.md")
+        final_md = store.get_text(job_paths.final("md"))
         assert len(final_md) > 0
         print(f"[RESULT] Final document length: {len(final_md)} characters")
         if out.exists():

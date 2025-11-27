@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Tuple
 
 from ..config import get_settings
 from ..messaging import publish_stage_event, send_queue_message
-from ..storage import BlobStore
+from ..storage import BlobStore, JobStoragePaths
 from ..telemetry import track_exception
 
 
@@ -75,6 +75,11 @@ def process_diagram_prep(data: Dict[str, Any]) -> None:
     if not job_id:
         logging.warning("diagram prep payload missing job_id")
         return
+    user_id = data.get("user_id")
+    if not user_id:
+        logging.warning("diagram prep payload missing user_id for job %s", job_id)
+        return
+    job_paths = JobStoragePaths(user_id=user_id, job_id=job_id)
 
     store = BlobStore()
     markdown = store.get_text(blob=data["out"])
@@ -140,9 +145,9 @@ def process_diagram_prep(data: Dict[str, Any]) -> None:
             alt_text = spec.get("alt_text") or spec.get("title") or spec.get("diagram_type")
         if not alt_text:
             alt_text = f"Diagram {diagram_id}"
-        blob_path = f"jobs/{job_id}/images/{safe_id}.{fmt}"
+        blob_path = job_paths.images(f"{safe_id}.{fmt}")
         clean_source = _sanitize_source(body)
-        source_blob = f"jobs/{job_id}/diagrams/{safe_id}.puml"
+        source_blob = job_paths.diagrams(f"{safe_id}.puml")
         try:
             store.put_text(blob=source_blob, text=clean_source)
         except Exception as exc:
@@ -160,8 +165,10 @@ def process_diagram_prep(data: Dict[str, Any]) -> None:
         )
 
     finalize_payload = {**data, "diagram_code_blocks": code_blocks}
+    finalize_payload.setdefault("user_id", user_id)
     message = {
         "job_id": job_id,
+        "user_id": user_id,
         "diagram_requests": requests,
         "finalize_payload": finalize_payload,
     }

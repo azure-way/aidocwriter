@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+import posixpath
 
 try:
     from azure.storage.blob import BlobServiceClient  # type: ignore
@@ -11,10 +11,83 @@ except Exception:  # pragma: no cover
 from .config import get_settings
 
 
-@dataclass
+@dataclass(frozen=True)
 class BlobPath:
     container: str
     blob: str
+
+
+@dataclass(frozen=True)
+class JobStoragePaths:
+    user_id: str
+    job_id: str
+
+    def __post_init__(self) -> None:
+        if not self.user_id:
+            raise ValueError("user_id is required for JobStoragePaths")
+        if not self.job_id:
+            raise ValueError("job_id is required for JobStoragePaths")
+
+    @property
+    def root(self) -> str:
+        return f"jobs/{self._sanitize_segment(self.user_id)}/{self._sanitize_segment(self.job_id)}"
+
+    def draft(self) -> str:
+        return self._join("draft.md")
+
+    def final(self, suffix: str = "md") -> str:
+        suffix = suffix.lstrip(".")
+        return self._join(f"final.{suffix}")
+
+    def plan(self) -> str:
+        return self._join("plan.json")
+
+    def intake(self, relative: str) -> str:
+        return self._join("intake", relative)
+
+    def images(self, relative: str) -> str:
+        return self._join("images", relative)
+
+    def diagrams(self, relative: str) -> str:
+        return self._join("diagrams", relative)
+
+    def metrics(self, relative: str) -> str:
+        return self._join("metrics", relative)
+
+    def cycle(self, cycle_idx: int, relative: str) -> str:
+        if cycle_idx < 0:
+            raise ValueError("cycle_idx must be non-negative")
+        return self._join(f"cycle_{cycle_idx}", relative)
+
+    def relative(self, relative: str) -> str:
+        return self._join(relative)
+
+    def _join(self, *segments: str) -> str:
+        normalized = [self._normalize_relative(seg) for seg in segments if seg]
+        if not normalized:
+            return self.root
+        return f"{self.root}/{'/'.join(normalized)}"
+
+    @staticmethod
+    def _sanitize_segment(segment: str) -> str:
+        segment = (segment or "").strip().strip("/")
+        if not segment:
+            raise ValueError("Segment cannot be empty")
+        if any(part in {"..", "."} for part in segment.split("/")):
+            raise ValueError("Segment cannot contain relative path navigation")
+        return segment
+
+    @staticmethod
+    def _normalize_relative(relative: str) -> str:
+        relative = (relative or "").strip()
+        if not relative:
+            raise ValueError("Relative path segment cannot be empty")
+        cleaned = posixpath.normpath(relative.strip("/"))
+        if cleaned in {"", "."}:
+            raise ValueError("Relative path resolves to empty")
+        if cleaned.startswith("../") or cleaned == "..":
+            raise ValueError("Relative path cannot ascend from job root")
+        return cleaned
 
 
 class BlobStore:
@@ -33,8 +106,8 @@ class BlobStore:
         except Exception:
             pass
 
-    def allocate_document_blob(self, job_id: str) -> str:
-        return f"jobs/{job_id}/draft.md"
+    def allocate_document_blob(self, job_id: str, user_id: str) -> str:
+        return JobStoragePaths(user_id=user_id, job_id=job_id).draft()
 
     def put_text(self, blob: str, text: str) -> BlobPath:
         self.container.upload_blob(name=blob, data=text.encode("utf-8"), overwrite=True)

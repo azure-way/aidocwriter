@@ -25,7 +25,7 @@ from docwriter.stage_utils import (
     number_markdown_headings,
     parse_review_guidance,
 )
-from docwriter.storage import BlobStore
+from docwriter.storage import BlobStore, JobStoragePaths
 from docwriter.summary import Summarizer
 from docwriter.telemetry import stage_timer, track_event, track_exception, StageTiming
 from .cycles import CycleState, enrich_details_with_cycles as _with_cycle_metadata
@@ -36,6 +36,16 @@ import tiktoken
 ENCODING_NAME = "cl100k_base"
 
 logger = logging.getLogger(__name__)
+
+
+def _job_paths(data: Mapping[str, Any]) -> JobStoragePaths:
+    job_id = data.get("job_id")
+    user_id = data.get("user_id")
+    if not job_id:
+        raise ValueError("job_id missing from stage payload")
+    if not user_id:
+        raise ValueError(f"user_id missing from stage payload for job {job_id}")
+    return JobStoragePaths(user_id=user_id, job_id=job_id)
 
 
 def _estimate_tokens(text: str) -> int:
@@ -51,25 +61,29 @@ def _estimate_tokens(text: str) -> int:
         return max(1, len(text) // 3)
 
 
-def _apply_diagram_results(text: str, results: List[Dict[str, Any]], job_id: str) -> str:
+def _apply_diagram_results(text: str, results: List[Dict[str, Any]], job_paths: JobStoragePaths) -> str:
     if not results:
         return text
 
     updated = text
+    root_prefix = f"{job_paths.root}/"
     for item in results:
         code_block = item.get("code_block")
         blob_path = item.get("relative_path") or item.get("blob_path")
         if not code_block or not blob_path:
             continue
-        prefix = f"jobs/{job_id}/"
-        relative_path = blob_path[len(prefix) :] if blob_path.startswith(prefix) else blob_path
+        relative_path = blob_path[len(root_prefix) :] if blob_path.startswith(root_prefix) else blob_path
         diagram_id = item.get("diagram_id")
         alt_text = item.get("alt_text") or (f"Diagram {diagram_id}" if diagram_id else "Diagram")
         replacement = f"![{alt_text}]({relative_path})"
         if code_block in updated:
             updated = updated.replace(code_block, replacement, 1)
         else:
-            logging.warning("Diagram block not found during finalize for job %s: %s", job_id, diagram_id)
+            logging.warning(
+                "Diagram block not found during finalize for job %s: %s",
+                job_paths.job_id,
+                diagram_id,
+            )
     return updated
 
 
@@ -185,8 +199,9 @@ def process_plan_intake(data: Dict[str, Any], interviewer: InterviewerAgent | No
     settings = get_settings()
     interviewer = interviewer or InterviewerAgent()
     ensure_cycle_state(data)
-    artifact_path = f"jobs/{data['job_id']}/intake/questions.json"
-    with stage_timer(job_id=data["job_id"], stage="PLAN_INTAKE") as timing:
+    job_paths = _job_paths(data)
+    artifact_path = job_paths.intake("questions.json")
+    with stage_timer(job_id=data["job_id"], stage="PLAN_INTAKE", user_id=job_paths.user_id) as timing:
         title = data["title"]
         questions = interviewer.propose_questions(title)
         try:
@@ -199,16 +214,17 @@ def process_plan_intake(data: Dict[str, Any], interviewer: InterviewerAgent | No
                 "title": data.get("title"),
                 "audience": data.get("audience"),
                 "out": data.get("out"),
+                "user_id": job_paths.user_id,
             }
             store.put_text(
-                blob=f"jobs/{data['job_id']}/intake/context.json",
+                blob=job_paths.intake("context.json"),
                 text=json.dumps(context_snapshot, indent=2),
             )
             sample_answers = {
                 str(item.get("id")): item.get("sample", "") for item in questions if isinstance(item, dict)
             }
             store.put_text(
-                blob=f"jobs/{data['job_id']}/intake/sample_answers.json",
+                blob=job_paths.intake("sample_answers.json"),
                 text=json.dumps(sample_answers, indent=2),
             )
         except Exception as exc:
@@ -240,14 +256,15 @@ def process_plan_intake(data: Dict[str, Any], interviewer: InterviewerAgent | No
                 "stage notes: upload answers.json and resume",
             ),
             artifact=artifact_path,
-            extra={"details": intake_details},
+            extra={"details": intake_details, "user_id": job_paths.user_id},
         )
     )
 
 
 def process_intake_resume(data: Dict[str, Any]) -> None:
     settings = get_settings()
-    job_id = data.get("job_id")
+    job_paths = _job_paths(data)
+    job_id = job_paths.job_id
     if job_id:
         needed_keys = (
             "title",
@@ -258,7 +275,7 @@ def process_intake_resume(data: Dict[str, Any]) -> None:
         if needs_context:
             try:
                 store = BlobStore()
-                context_text = store.get_text(blob=f"jobs/{job_id}/intake/context.json")
+                context_text = store.get_text(blob=job_paths.intake("context.json"))
                 context = json.loads(context_text)
             except Exception as exc:
                 context = None
@@ -273,7 +290,7 @@ def process_intake_resume(data: Dict[str, Any]) -> None:
         ensure_cycle_state(data)
     else:
         CycleState.from_context(data).apply(data)
-    with stage_timer(job_id=data["job_id"], stage="INTAKE_RESUME") as timing:
+    with stage_timer(job_id=data["job_id"], stage="INTAKE_RESUME", user_id=job_paths.user_id) as timing:
         publish_stage_event("PLAN", "QUEUED", data)
         send_queue_message(settings.sb_queue_plan, data)
         resume_details = _with_cycle_metadata(
@@ -297,7 +314,7 @@ def process_intake_resume(data: Dict[str, Any]) -> None:
                     0,
                     None,
                 ),
-                extra={"details": resume_details},
+                extra={"details": resume_details, "user_id": job_paths.user_id},
             )
         )
 
@@ -306,6 +323,7 @@ def process_plan(data: Dict[str, Any], planner: PlannerAgent | None = None) -> N
     settings = get_settings()
     planner = planner or PlannerAgent()
     ensure_cycle_state(data)
+    job_paths = _job_paths(data)
     store: BlobStore | None = None
     try:
         store = BlobStore()
@@ -317,7 +335,7 @@ def process_plan(data: Dict[str, Any], planner: PlannerAgent | None = None) -> N
         "title=",
         data.get("title"),
     )
-    with stage_timer(job_id=data["job_id"], stage="PLAN") as timing:
+    with stage_timer(job_id=data["job_id"], stage="PLAN", user_id=job_paths.user_id) as timing:
         audience = data.get("audience")
         title = data.get("title")
         length_pages = 80
@@ -325,7 +343,7 @@ def process_plan(data: Dict[str, Any], planner: PlannerAgent | None = None) -> N
         answers: Dict[str, Any] = {}
         if store:
             try:
-                plan_text = store.get_text(blob=f"jobs/{data['job_id']}/plan.json")
+                plan_text = store.get_text(blob=job_paths.plan())
                 existing_plan = json.loads(plan_text)
                 title = existing_plan.get("title", title)
                 audience = existing_plan.get("audience", audience)
@@ -335,7 +353,7 @@ def process_plan(data: Dict[str, Any], planner: PlannerAgent | None = None) -> N
                 pass
 
             try:
-                answers_text = store.get_text(blob=f"jobs/{data['job_id']}/intake/answers.json")
+                answers_text = store.get_text(blob=job_paths.intake("answers.json"))
                 answers = json.loads(answers_text)
                 audience = answers.get("audience", audience)
                 title = answers.get("title", title)
@@ -369,15 +387,12 @@ def process_plan(data: Dict[str, Any], planner: PlannerAgent | None = None) -> N
     }
     try:
         target_store = store or BlobStore()
-        target_store.put_text(
-            blob=f"jobs/{data['job_id']}/plan.json",
-            text=json.dumps(payload["plan"], indent=2),
-        )
+        target_store.put_text(blob=job_paths.plan(), text=json.dumps(payload["plan"], indent=2))
     except Exception as exc:
         track_exception(exc, {"job_id": data["job_id"], "stage": "PLAN"})
     publish_stage_event("WRITE", "QUEUED", payload)
     send_queue_message(settings.sb_queue_write, payload)
-    artifact_path = f"jobs/{data['job_id']}/plan.json"
+    artifact_path = job_paths.plan()
     plan_tokens = _usage_total(getattr(planner.llm, "last_usage", None))
     if not plan_tokens:
         plan_tokens = _estimate_tokens(json.dumps(payload["plan"], ensure_ascii=False))
@@ -400,12 +415,13 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
     writer = writer or WriterAgent()
     summarizer = summarizer or Summarizer()
     ensure_cycle_state(data)
+    job_paths = _job_paths(data)
     blob_path = data.get("out")
     if not isinstance(blob_path, str) or not blob_path:
-        blob_path = BlobStore().allocate_document_blob(data["job_id"])
+        blob_path = BlobStore().allocate_document_blob(job_paths.job_id, job_paths.user_id)
 
     write_tokens_total = 0
-    with stage_timer(job_id=data["job_id"], stage="WRITE") as timing:
+    with stage_timer(job_id=data["job_id"], stage="WRITE", user_id=job_paths.user_id) as timing:
         plan = data["plan"]
         outline = plan.get("outline", [])
         graph = build_dependency_graph(outline)
@@ -429,7 +445,7 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
     try:
         store = BlobStore()
         store.put_text(blob=blob_path, text=document_text)
-        store.put_text(blob=f"jobs/{data['job_id']}/draft.md", text=document_text)
+        store.put_text(blob=job_paths.draft(), text=document_text)
     except Exception as exc:
         track_exception(exc, {"job_id": data["job_id"], "stage": "WRITE"})
     publish_stage_event("REVIEW", "QUEUED", payload)
@@ -441,7 +457,7 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
             data["job_id"],
             "WRITE",
             timing,
-            artifact=f"jobs/{data['job_id']}/draft.md",
+            artifact=job_paths.draft(),
             tokens=write_tokens_total,
             model=settings.writer_model,
             source=data,
@@ -453,6 +469,7 @@ def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) 
     settings = get_settings()
     reviewer = reviewer or ReviewerAgent()
     cycle_state = ensure_cycle_state(data)
+    job_paths = _job_paths(data)
     if cycle_state.completed >= cycle_state.requested:
         logger.info(
             "Job %s reached maximum cycles (%s); skipping additional review and moving to finalize queue",
@@ -464,7 +481,7 @@ def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) 
         return
     cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
     publish_stage_event("REVIEW", "START", data)
-    with stage_timer(job_id=data["job_id"], stage="REVIEW", cycle=cycle_idx) as timing:
+    with stage_timer(job_id=data["job_id"], stage="REVIEW", cycle=cycle_idx, user_id=job_paths.user_id) as timing:
         store = BlobStore()
         draft = store.get_text(blob=data["out"])
         review_json = reviewer.review(plan=data["plan"], draft_markdown=draft)
@@ -477,13 +494,10 @@ def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) 
     payload = {**data, "review_json": review_json, "style_json": style, "cohesion_json": cohesion, "exec_summary_json": summary}
     try:
         store = BlobStore()
-        store.put_text(
-            blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/review.json",
-            text=review_json,
-        )
-        store.put_text(blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/style.json", text=style)
-        store.put_text(blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/cohesion.json", text=cohesion)
-        store.put_text(blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/executive_summary.json", text=summary)
+        store.put_text(blob=job_paths.cycle(cycle_idx, "review.json"), text=review_json)
+        store.put_text(blob=job_paths.cycle(cycle_idx, "style.json"), text=style)
+        store.put_text(blob=job_paths.cycle(cycle_idx, "cohesion.json"), text=cohesion)
+        store.put_text(blob=job_paths.cycle(cycle_idx, "executive_summary.json"), text=summary)
     except Exception as exc:
         track_exception(exc, {"job_id": data["job_id"], "stage": "REVIEW"})
     publish_stage_event("VERIFY", "QUEUED", payload)
@@ -503,7 +517,7 @@ def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) 
             data["job_id"],
             "REVIEW",
             timing,
-            artifact=f"jobs/{data['job_id']}/cycle_{cycle_idx}/review.json",
+            artifact=job_paths.cycle(cycle_idx, "review.json"),
             tokens=review_tokens,
             model=settings.reviewer_model,
             source=data,
@@ -516,8 +530,9 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
     verifier = verifier or VerifierAgent()
     cycle_state = ensure_cycle_state(data)
     cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
+    job_paths = _job_paths(data)
     publish_stage_event("VERIFY", "START", data)
-    with stage_timer(job_id=data["job_id"], stage="VERIFY", cycle=cycle_idx) as timing:
+    with stage_timer(job_id=data["job_id"], stage="VERIFY", cycle=cycle_idx, user_id=job_paths.user_id) as timing:
         store = BlobStore()
         draft = store.get_text(blob=data["out"])
         try:
@@ -529,10 +544,7 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
                     draft = merged
                     try:
                         store.put_text(blob=data["out"], text=merged)
-                        store.put_text(
-                            blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/revision.md",
-                            text=merged,
-                        )
+                        store.put_text(blob=job_paths.cycle(cycle_idx, "revision.md"), text=merged)
                     except Exception:
                         pass
         except Exception:
@@ -545,10 +557,7 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
     cycle_state = ensure_cycle_state(payload)
     try:
         store = BlobStore()
-        store.put_text(
-            blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/contradictions.json",
-            text=verification_json,
-        )
+        store.put_text(blob=job_paths.cycle(cycle_idx, "contradictions.json"), text=verification_json)
     except Exception as exc:
         track_exception(exc, {"job_id": data["job_id"], "stage": "VERIFY"})
     try:
@@ -568,7 +577,7 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
 
     payload["placeholder_sections"] = sorted(placeholder_sections)
     payload["requires_rewrite"] = needs_rewrite
-    artifact_path = f"jobs/{data['job_id']}/cycle_{cycle_idx}/contradictions.json"
+    artifact_path = job_paths.cycle(cycle_idx, "contradictions.json")
     verify_tokens = _usage_total(getattr(verifier.llm, "last_usage", None))
     if not verify_tokens:
         verify_tokens = _estimate_tokens(verification_json)
@@ -612,7 +621,8 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
                     },
                     payload,
                     cycle_idx=cycle_idx,
-                )
+                ),
+                "user_id": job_paths.user_id,
             },
         )
     )
@@ -625,11 +635,12 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
     settings = get_settings()
     writer = writer or WriterAgent()
     cycle_state = ensure_cycle_state(data)
+    job_paths = _job_paths(data)
     rewrite_tokens_total = 0
     requires_rewrite = bool(data.get("requires_rewrite"))
     cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
     publish_stage_event("REWRITE", "START", data)
-    with stage_timer(job_id=data["job_id"], stage="REWRITE", cycle=cycle_idx) as timing:
+    with stage_timer(job_id=data["job_id"], stage="REWRITE", cycle=cycle_idx, user_id=job_paths.user_id) as timing:
         plan = data["plan"]
         store = BlobStore()
         text = store.get_text(blob=data["out"])
@@ -685,7 +696,7 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
                     rewrite_tokens_total += _usage_total(getattr(writer.llm, "last_usage", None))
                 store.put_text(blob=data["out"], text=text)
                 try:
-                    store.put_text(blob=f"jobs/{data['job_id']}/cycle_{cycle_idx}/rewrite.md", text=text)
+                    store.put_text(blob=job_paths.cycle(cycle_idx, "rewrite.md"), text=text)
                 except Exception:
                     pass
     payload = {
@@ -720,31 +731,31 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
 def process_finalize(data: Dict[str, Any]) -> None:
     ensure_cycle_state(data)
     final_text = ""
-    with stage_timer(job_id=data["job_id"], stage="FINALIZE") as timing:
+    job_paths = _job_paths(data)
+    with stage_timer(job_id=data["job_id"], stage="FINALIZE", user_id=job_paths.user_id) as timing:
         try:
             store = BlobStore()
-            job_id = data["job_id"]
             target_blob = data["out"]
             final_text = store.get_text(blob=target_blob)
             final_text = _apply_diagram_results(
                 final_text,
                 data.get("diagram_results", []),
-                job_id,
+                job_paths,
             )
             final_text = number_markdown_headings(final_text)
-            store.put_text(blob=f"jobs/{job_id}/final.md", text=final_text)
-            pdf_bytes = export_pdf(final_text, {}, store, job_id)
+            store.put_text(blob=job_paths.final("md"), text=final_text)
+            pdf_bytes = export_pdf(final_text, {}, store, job_paths)
             if pdf_bytes:
                 try:
-                    store.put_bytes(blob=f"jobs/{job_id}/final.pdf", data_bytes=pdf_bytes)
+                    store.put_bytes(blob=job_paths.final("pdf"), data_bytes=pdf_bytes)
                 except Exception:
-                    logging.exception("Failed to upload PDF export for job %s", job_id)
-            docx_bytes = export_docx(final_text, {}, store, job_id)
+                    logging.exception("Failed to upload PDF export for job %s", job_paths.job_id)
+            docx_bytes = export_docx(final_text, {}, store, job_paths)
             if docx_bytes:
                 try:
-                    store.put_bytes(blob=f"jobs/{job_id}/final.docx", data_bytes=docx_bytes)
+                    store.put_bytes(blob=job_paths.final("docx"), data_bytes=docx_bytes)
                 except Exception:
-                    logging.exception("Failed to upload DOCX export for job %s", job_id)
+                    logging.exception("Failed to upload DOCX export for job %s", job_paths.job_id)
         except Exception:
             logging.exception("Failed to finalize job %s", data.get("job_id"))
     final_tokens = 0
@@ -753,7 +764,7 @@ def process_finalize(data: Dict[str, Any]) -> None:
             data["job_id"],
             "FINALIZE",
             timing,
-            artifact=f"jobs/{data['job_id']}/final.md",
+            artifact=job_paths.final("md"),
             tokens=final_tokens,
             model=None,
             source=data,

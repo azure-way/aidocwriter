@@ -204,21 +204,16 @@ Documentation and deployment scripts will be updated as those components land.
    - The workspace landing page now shows a document list (status, last update, artifact download) plus quick “Create new document” entry and detail selection.
    - Job creation/resume/status/timeline/artifact download flows include the access token automatically and refresh the document list when state changes.
 
-### Upcoming Phases
 - **Phase 4 – Document Lifecycle Actions**
-  - Persist and display per-document metadata (review cycle counts, artifact versions, error states).
-  - Allow pausing/canceling jobs, manual retries, and per-stage logs.
-  - Add filtering/search to the workspace hub.
+  - Added per-document metadata (cycle counts, last error, artifact availability) stored via the Azure Table index.
+  - Workspace list now supports search, status filters, manual refresh, and “Resume” actions for failed jobs with download buttons for final artifacts.
+  - Job creation moved to `/newdocument`, keeping the workspace dedicated to portfolio tracking.
 
-- **Phase 5 – Collaboration & Sharing**
-  - Introduce document sharing (invite other Auth0 users, read-only/public links).
-  - Add comments/activity feed per document.
-  - Expose webhook or Teams/Slack notifications for stage transitions.
-
-- **Phase 6 – Advanced Outputs & Integrations**
-  - Support additional export formats (HTML bundle, Confluence, SharePoint).
-  - Provide “publish to repo” integration (GitHub/Azure DevOps) with PR automation.
-  - Build a Zapier-compatible REST surface for automated downstream workflows.
+### Upcoming Phases
+- **Phase 5 – Access Control & Notifications**
+  - each user have its own directory in the Storage ie. jobs/{user_id}/{job_id}
+  - path for jobs/{user_id} is accessbily only by the certain user
+  - Enforce per-document ACLs (creator is owner) persisted alongside metadata so only authorized users can query `/jobs` or fetch artifacts.
 
 These phases are not implemented yet; they outline the roadmap for future sessions.
 Future phases will extend the hub with richer metadata, filtering, and collaborative features.

@@ -22,7 +22,7 @@ except Exception:  # pragma: no cover
     TelemetryClient = None  # type: ignore
 
 from .config import get_settings
-from .storage import BlobStore
+from .storage import BlobStore, JobStoragePaths
 
 
 _initialized = False
@@ -100,7 +100,13 @@ class StageTiming:
 
 
 @contextmanager
-def stage_timer(job_id: str, stage: str, cycle: int | None = None) -> StageTiming:
+def stage_timer(
+    job_id: str,
+    stage: str,
+    cycle: int | None = None,
+    *,
+    user_id: str | None = None,
+) -> StageTiming:
     """Context manager to time a stage and upload metrics JSON to Blob."""
     settings = get_settings()
     init_tracer()
@@ -137,7 +143,13 @@ def stage_timer(job_id: str, stage: str, cycle: int | None = None) -> StageTimin
         try:
             store = BlobStore()
             metrics = {"job_id": job_id, "stage": stage, "cycle": cycle, "duration_s": duration_s}
-            blob = f"jobs/{job_id}/metrics/{stage}_{('cycle'+str(cycle)) if cycle else 'once'}.json"
+            if user_id:
+                metrics["user_id"] = user_id
+                blob = JobStoragePaths(user_id=user_id, job_id=job_id).metrics(
+                    f"{stage}_{('cycle'+str(cycle)) if cycle else 'once'}.json"
+                )
+            else:
+                blob = f"jobs/{job_id}/metrics/{stage}_{('cycle'+str(cycle)) if cycle else 'once'}.json"
             store.put_text(blob=blob, text=json.dumps(metrics, indent=2))
         except Exception:
             pass

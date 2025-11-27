@@ -45,7 +45,7 @@ def client(monkeypatch):
         saved_jobs[job_id] = job
         return job_id
 
-    def fake_send_resume(job_id):
+    def fake_send_resume(job_id, user_id=None):
         saved_jobs.setdefault(job_id, None)
 
     class FakeBlobStore:

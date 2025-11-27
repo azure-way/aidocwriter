@@ -21,3 +21,4 @@ scripts/
 *.tfstate
 *.tfstate.backup
 *.hcl
+build/

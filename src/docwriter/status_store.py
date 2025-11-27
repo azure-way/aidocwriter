@@ -29,6 +29,15 @@ def _history_row_key(ts: float, stage: Optional[str]) -> str:
     return f"{int(ts * 1_000_000):020d}_{stage_label}"
 
 
+def _coerce_int_safe(value: Any) -> Optional[int]:
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 class StatusTableStore:
     def __init__(self, connection_string: str, table_name: str) -> None:
         self._service = TableServiceClient.from_connection_string(connection_string)
@@ -68,13 +77,28 @@ class StatusTableStore:
         if isinstance(user_id, str) and user_id:
             try:
                 index_store = get_document_index_store()
+                details_payload = payload.get("details")
+                expected_cycles = None
+                cycles_completed = None
+                if isinstance(details_payload, dict):
+                    expected_cycles = details_payload.get("expected_cycles") or details_payload.get("cycles")
+                    cycles_completed = details_payload.get("cycles_completed")
+                if expected_cycles is None:
+                    expected_cycles = payload.get("cycles")
+                stage_value = str(payload.get("stage", ""))
+                stage_upper = stage_value.upper()
+                has_error = stage_upper.endswith("_FAILED")
                 index_store.upsert(
                     user_id,
                     job_id,
-                    stage=payload.get("stage"),
+                    stage=stage_value,
                     message=payload.get("message"),
                     artifact=payload.get("artifact"),
                     updated=ts,
+                    cycles_requested=_coerce_int_safe(expected_cycles),
+                    cycles_completed=_coerce_int_safe(cycles_completed),
+                    has_error=has_error,
+                    last_error=payload.get("message") if has_error else None,
                 )
             except Exception:
                 pass
