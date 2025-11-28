@@ -45,7 +45,7 @@ class Settings:
     reviewer_model: str = "o3"
     reviewer_api_version: str | None = "2025-04-01-preview"
     reviewer_use_responses: bool = True
-    writer_model: str = "gpt-4.1"
+    writer_model: str = "gpt-5.1"
     writer_api_version: str | None = "2025-04-01-preview"
     writer_use_responses: bool = True
 
