@@ -1,4 +1,4 @@
-import { JobDashboard } from "../../page";
+import { JobDashboard } from "../../newdocument/page";
 
 type JobPageProps = {
   params: {

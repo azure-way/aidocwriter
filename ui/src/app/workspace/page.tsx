@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { GlassCard } from "@/components/GlassCard";
 import { useUser } from "@auth0/nextjs-auth0/client";
 import { downloadArtifact, fetchDocuments, resumeJob } from "@/lib/api";
+import { determineEventPhase, normalizeStageName } from "@/lib/timeline";
 
 interface DocumentSummary {
   job_id: string;
@@ -22,6 +23,19 @@ interface DocumentSummary {
 
 type StageFilter = "all" | "active" | "completed" | "error";
 
+const SUMMARY_STAGE_ORDER = [
+  "ENQUEUED",
+  "INTAKE_READY",
+  "INTAKE_RESUME",
+  "PLAN",
+  "WRITE",
+  "REVIEW",
+  "VERIFY",
+  "REWRITE",
+  "DIAGRAM",
+  "FINALIZE",
+];
+
 function formatTimestamp(value?: number) {
   if (!value && value !== 0) return "—";
   return new Date(Number(value) * 1000).toLocaleString();
@@ -35,6 +49,7 @@ export default function WorkspacePage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [stageFilter, setStageFilter] = useState<StageFilter>("all");
   const [resumeJobId, setResumeJobId] = useState<string | null>(null);
+  const totalStages = SUMMARY_STAGE_ORDER.length;
 
   const refreshDocuments = useCallback(async () => {
     if (!user?.sub) {
@@ -177,9 +192,19 @@ export default function WorkspacePage() {
               const stageLabel = doc.stage ? doc.stage.replace(/_/g, " ") : "Pending";
               const completed = stageUpper.startsWith("FINALIZE") || stageUpper === "FINALIZE_DONE";
               const errored = Boolean(doc.has_error || stageUpper.endsWith("_FAILED"));
-              const cyclesRequested = doc.cycles_requested ?? doc.cycles_completed ?? 0;
-              const cyclesCompleted = doc.cycles_completed ?? 0;
-              const progress = cyclesRequested ? Math.min(100, Math.round((cyclesCompleted / cyclesRequested) * 100)) : null;
+              const normalizedStage = doc.stage ? normalizeStageName(stageUpper) : null;
+              const stagePosition = normalizedStage ? SUMMARY_STAGE_ORDER.indexOf(normalizedStage) : -1;
+              const stagePhase = determineEventPhase(doc.stage ? { stage: doc.stage } : undefined);
+              const completedSteps = (() => {
+                if (stagePosition < 0) {
+                  return 0;
+                }
+                if (stagePhase === "complete" || stagePhase === "failed") {
+                  return Math.min(totalStages, stagePosition + 1);
+                }
+                return Math.max(0, stagePosition);
+              })();
+              const stepsRemaining = Math.max(0, totalStages - completedSteps);
               return (
                 <div
                   key={doc.job_id}
@@ -199,21 +224,23 @@ export default function WorkspacePage() {
                       <span className="text-xs text-slate-500">{formatTimestamp(doc.updated)}</span>
                     </div>
                   </div>
-                  {progress !== null ? (
-                    <div>
-                      <div className="flex justify-between text-xs text-slate-500">
-                        <span>Review cycles</span>
-                        <span>
-                          {cyclesCompleted}/{cyclesRequested}
-                        </span>
-                      </div>
-                      <div className="mt-1 h-2 rounded-full bg-slate-200">
-                        <div className="h-full rounded-full bg-slate-800" style={{ width: `${progress}%` }} />
-                      </div>
-                    </div>
-                  ) : null}
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                    <span>
+                      <span className="font-semibold text-slate-700">{completedSteps}</span> of {totalStages} steps completed
+                    </span>
+                    <span className="text-slate-400">•</span>
+                    <span>
+                      <span className="font-semibold text-slate-700">{stepsRemaining}</span> left
+                    </span>
+                  </div>
                   {doc.last_error && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">{doc.last_error}</p>}
                   <div className="flex flex-wrap gap-3">
+                    <Link
+                      href={`/job/${encodeURIComponent(doc.job_id)}`}
+                      className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400"
+                    >
+                      View timeline
+                    </Link>
                     {doc.artifact ? (
                       <button
                         type="button"

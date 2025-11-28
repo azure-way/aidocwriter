@@ -84,7 +84,7 @@ def _reformat_plantuml_text(source: str | bytes) -> str:
         LLMMessage("user", f"{prompt}\n\n<plantuml>\n{normalized}\n</plantuml>"),
     ]
     try:
-        model = os.getenv("DOCWRITER_PLANTUML_REFORMAT_MODEL", "gpt-5")
+        model = os.getenv("DOCWRITER_PLANTUML_REFORMAT_MODEL", "gpt-5.1")
         client = _get_reformat_client()
         result = client.chat(model=model, messages=messages)
         if isinstance(result, dict):
