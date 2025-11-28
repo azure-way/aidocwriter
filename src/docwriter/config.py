@@ -74,7 +74,7 @@ class Settings:
     # Behavior
     request_timeout_s: int = 120
     max_section_tokens: int = 2500
-    streaming: bool = True
+    streaming: bool = False
 
     # Azure Blob Storage
     blob_connection_string: str | None = None
