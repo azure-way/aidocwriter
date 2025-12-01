@@ -245,22 +245,36 @@ def job_timeline(job_id: str, user_id: str = Depends(current_user_dependency)) -
 
 @router.get("/artifacts")
 def download_artifact(
-    path: str,
+    job_id: str | None = None,
+    name: str | None = None,
+    path: str | None = None,
     store: BlobStore = Depends(blob_store_dependency),
     user_id: str = Depends(current_user_dependency),
 ) -> Response:
-    if not path or path.startswith("/") or ".." in path:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid blob path")
-    parts = path.split("/")
-    if len(parts) < 2 or parts[0] != "jobs":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Malformed artifact path")
-    job_id = parts[1]
+    """Download an artifact by job + relative name, with legacy path support."""
+
+    # Fallback for older clients passing `path`
+    if path:
+        blob_path, download_name, requested_job_id = _resolve_legacy_artifact_path(path, user_id)
+    else:
+        if not job_id or not name:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="job_id and name required")
+        job_paths = JobStoragePaths(user_id=user_id, job_id=job_id)
+        safe_name = name.lstrip("/")
+        try:
+            blob_path = job_paths.relative(safe_name)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid artifact name") from exc
+        download_name = safe_name.split("/")[-1]
+        requested_job_id = job_id
+
     index_store = get_document_index_store()
-    existing = index_store.get(user_id, job_id)
+    existing = index_store.get(user_id, requested_job_id)
     if existing is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found for user")
+
     try:
-        blob = store.container.get_blob_client(path)
+        blob = store.container.get_blob_client(blob_path)
         props = blob.get_blob_properties()
         data = blob.download_blob().readall()
     except ResourceNotFoundError as exc:
@@ -268,5 +282,23 @@ def download_artifact(
     except HttpResponseError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Blob download failed") from exc
     content_type = props.content_settings.content_type or "application/octet-stream"
-    headers = {"Content-Disposition": f'attachment; filename="{path.split("/")[-1]}"'}
+    headers = {"Content-Disposition": f'attachment; filename="{download_name}"'}
     return Response(content=data, media_type=content_type, headers=headers)
+
+
+def _resolve_legacy_artifact_path(path: str, user_id: str) -> tuple[str, str, str]:
+    if path.startswith("/") or ".." in path:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid blob path")
+    parts = path.split("/")
+    if len(parts) < 3 or parts[0] != "jobs":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Malformed artifact path")
+
+    if parts[1] == user_id:
+        requested_job_id = parts[2] if len(parts) >= 3 else ""
+        download_name = parts[-1]
+        return path, download_name, requested_job_id
+
+    requested_job_id = parts[1]
+    relative_tail = "/".join(parts[2:])
+    blob_path = f"jobs/{user_id}/{requested_job_id}/{relative_tail}"
+    return blob_path, relative_tail.split("/")[-1], requested_job_id

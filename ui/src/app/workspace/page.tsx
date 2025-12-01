@@ -87,9 +87,9 @@ export default function WorkspacePage() {
     [refreshDocuments]
   );
 
-  const downloadArtifactFile = useCallback(async (path: string) => {
+  const downloadArtifactFile = useCallback(async (jobId: string, path: string) => {
     try {
-      const blob = await downloadArtifact(path);
+      const blob = await downloadArtifact(jobId, path);
       const fileName = path.split("/").pop() ?? "artifact";
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -245,7 +245,7 @@ export default function WorkspacePage() {
                       <button
                         type="button"
                         className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400"
-                        onClick={() => downloadArtifactFile(doc.artifact!)}
+                        onClick={() => downloadArtifactFile(doc.job_id, doc.artifact!)}
                       >
                         Download artifact
                       </button>

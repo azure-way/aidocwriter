@@ -68,13 +68,27 @@ async function request(path: string, options: RequestOptions = {}) {
   return res.json();
 }
 
-export async function downloadArtifact(path: string): Promise<Blob> {
+const deriveArtifactName = (_jobId: string, rawPath: string): string => {
+  if (!rawPath) {
+    throw new Error("Artifact path missing");
+  }
+  const cleaned = rawPath.replace(/^\/+/, "");
+  const parts = cleaned.split("/");
+  return parts[parts.length - 1] || cleaned;
+};
+
+export async function downloadArtifact(jobId: string, rawPath: string): Promise<Blob> {
   if (!API_BASE) {
     throw new Error("NEXT_PUBLIC_API_BASE_URL is not set");
   }
+  if (!jobId) {
+    throw new Error("jobId is required to download artifacts");
+  }
   const token = await getAccessToken();
   const url = new URL("/jobs/artifacts", API_BASE);
-  url.searchParams.set("path", path);
+  const artifactName = deriveArtifactName(jobId, rawPath);
+  url.searchParams.set("job_id", jobId);
+  url.searchParams.set("name", artifactName);
   const res = await fetch(url.toString(), {
     cache: "no-store",
     headers: {

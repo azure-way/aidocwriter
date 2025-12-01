@@ -457,9 +457,13 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
   );
 
   const openArtifact = useCallback(
-    async (path: string) => {
+    async (job: string | null, path: string) => {
+      if (!job) {
+        console.warn("Attempted to open artifact without job ID");
+        return;
+      }
       try {
-        const blob = await downloadArtifact(path);
+        const blob = await downloadArtifact(job, path);
         const url = URL.createObjectURL(blob);
         window.open(url, "_blank", "noopener,noreferrer");
         setTimeout(() => URL.revokeObjectURL(url), 5000);
@@ -472,9 +476,13 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
   );
 
   const downloadArtifactFile = useCallback(
-    async (path: string) => {
+    async (job: string | null, path: string) => {
+      if (!job) {
+        console.warn("Attempted to download artifact without job ID");
+        return;
+      }
       try {
-        const blob = await downloadArtifact(path);
+        const blob = await downloadArtifact(job, path);
         const fileName = path.split("/").pop() ?? "artifact";
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
@@ -533,14 +541,14 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
                 <button
                   type="button"
                   className={buttonClass}
-                  onClick={() => openArtifact(artifactPath)}
+                  onClick={() => openArtifact(jobId, artifactPath)}
                 >
                   Open
                 </button>
                 <button
                   type="button"
                   className={buttonClass}
-                  onClick={() => downloadArtifactFile(artifactPath)}
+                  onClick={() => downloadArtifactFile(jobId, artifactPath)}
                 >
                   Download
                 </button>
