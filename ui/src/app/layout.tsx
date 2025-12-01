@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { UserProvider } from "@auth0/nextjs-auth0/client";
+import { Auth0Provider } from "@auth0/nextjs-auth0/client";
 import { AuthControls } from "@/components/auth/AuthControls";
 import "./globals.css";
 
@@ -23,7 +23,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="min-h-screen bg-slate-50 text-slate-900">
-        <UserProvider>
+        <Auth0Provider>
           <div className="relative min-h-screen overflow-hidden">
             <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_top,_rgba(148,163,184,0.25),_transparent_65%)]" />
             <div className="flex min-h-screen w-full flex-col gap-12 px-4 py-8 sm:px-8 lg:px-12">
@@ -50,7 +50,7 @@ export default function RootLayout({
               </main>
             </div>
           </div>
-        </UserProvider>
+        </Auth0Provider>
       </body>
     </html>
   );

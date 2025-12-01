@@ -558,7 +558,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
         </div>
       );
     },
-    [downloadArtifactFile, openArtifact]
+    [downloadArtifactFile, openArtifact, jobId]
   );
 
   useEffect(() => {

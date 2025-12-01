@@ -1,5 +1,6 @@
-import { getAccessToken } from "@auth0/nextjs-auth0";
 import { NextRequest, NextResponse } from "next/server";
+
+import { auth0 } from "@/lib/auth0";
 
 function buildArgs(request: NextRequest) {
   const params = request.nextUrl.searchParams;
@@ -17,10 +18,10 @@ function buildArgs(request: NextRequest) {
 async function obtainToken(request: NextRequest) {
   const args = buildArgs(request);
   const response = NextResponse.next();
-  const token = await getAccessToken(request, response, {
+  const token = await auth0.getAccessToken(request, response, {
     refresh: true,
     audience: args.audience,
-    scopes: args.scopes,
+    scope: args.scopes?.join(" "),
   });
   return { response, token };
 }
@@ -28,14 +29,15 @@ async function obtainToken(request: NextRequest) {
 export async function GET(request: NextRequest) {
   try {
     const { response, token } = await obtainToken(request);
-    const body = NextResponse.json({ accessToken: token.accessToken });
+    const body = NextResponse.json({ accessToken: token.token, scope: token.scope });
     response.cookies.getAll().forEach((cookie) => {
       body.cookies.set(cookie);
     });
     return body;
-  } catch (error: any) {
-    const status = error?.status ?? 401;
-    const message = error?.message ?? "Unable to fetch access token";
+  } catch (error: unknown) {
+    const err = (typeof error === "object" && error) ? (error as { status?: number; message?: string }) : {};
+    const status = err.status ?? 401;
+    const message = err.message ?? "Unable to fetch access token";
     return NextResponse.json({ error: message }, { status });
   }
 }
