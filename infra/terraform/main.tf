@@ -89,6 +89,18 @@ resource "azurerm_key_vault_secret" "open_ai_key" {
   key_vault_id = azurerm_key_vault.rbac_example.id
 }
 
+resource "azurerm_key_vault_secret" "auth0_client_secret" {
+  name         = "auth0-client-secret"
+  value        = var.auth0_client_secret
+  key_vault_id = azurerm_key_vault.rbac_example.id
+}
+
+resource "azurerm_key_vault_secret" "auth0_secret" {
+  name         = "auth0-secret"
+  value        = var.auth0_secret
+  key_vault_id = azurerm_key_vault.rbac_example.id
+}
+
 resource "azurerm_role_assignment" "open_ai_key_secret_reader" {
   scope                = azurerm_key_vault_secret.open_ai_key.resource_versionless_id
   role_definition_name = "Key Vault Secrets User"
@@ -153,8 +165,8 @@ module "app" {
   container_registry_login = module.container_registry.url
   plantuml_server_name     = var.plantuml_server_name
 
-  tags                     = var.tags
-  api_images               = {
+  tags = var.tags
+  api_images = {
     api      = "${module.container_registry.url}/docwriter-api:${var.docker_image_version}"
     plantuml = "${module.container_registry.url}/plantuml-server:${var.docker_image_version}"
   }
@@ -164,37 +176,45 @@ module "app" {
     plantuml = 8080
   }
 
+  ui_images = {
+    ui = "${module.container_registry.url}/docwriter-ui:${var.docker_image_version}"
+  }
+
+  ui_ports = {
+    ui = 80
+  }
+
   api_env = {
-    OPENAI_BASE_URL                 = var.openai_base_url
-    OPENAI_API_VERSION              = var.openai_api_version
-    SERVICE_BUS_QUEUE_PLAN_INTAKE   = "docwriter-plan-intake"
-    SERVICE_BUS_QUEUE_INTAKE_RESUME = "docwriter-intake-resume"
-    SERVICE_BUS_QUEUE_PLAN          = "docwriter-plan"
-    SERVICE_BUS_QUEUE_WRITE         = "docwriter-write"
-    SERVICE_BUS_QUEUE_REVIEW        = "docwriter-review"
-    SERVICE_BUS_QUEUE_VERIFY        = "docwriter-verify"
-    SERVICE_BUS_QUEUE_REWRITE       = "docwriter-rewrite"
-    SERVICE_BUS_QUEUE_DIAGRAM_PREP  = "docwriter-diagram-prep"
+    OPENAI_BASE_URL                  = var.openai_base_url
+    OPENAI_API_VERSION               = var.openai_api_version
+    SERVICE_BUS_QUEUE_PLAN_INTAKE    = "docwriter-plan-intake"
+    SERVICE_BUS_QUEUE_INTAKE_RESUME  = "docwriter-intake-resume"
+    SERVICE_BUS_QUEUE_PLAN           = "docwriter-plan"
+    SERVICE_BUS_QUEUE_WRITE          = "docwriter-write"
+    SERVICE_BUS_QUEUE_REVIEW         = "docwriter-review"
+    SERVICE_BUS_QUEUE_VERIFY         = "docwriter-verify"
+    SERVICE_BUS_QUEUE_REWRITE        = "docwriter-rewrite"
+    SERVICE_BUS_QUEUE_DIAGRAM_PREP   = "docwriter-diagram-prep"
     SERVICE_BUS_QUEUE_DIAGRAM_RENDER = "docwriter-diagram-render"
     SERVICE_BUS_QUEUE_FINALIZE_READY = "docwriter-finalize-ready"
-    SERVICE_BUS_TOPIC_STATUS        = module.service_bus.topic_name
-    SERVICE_BUS_STATUS_SUBSCRIPTION = "status-writer"
-    AZURE_BLOB_CONTAINER            = "docwriter"
-    AUTH0_ISSUER_BASE_URL           = var.auth0_issuer_base_url
-    AUTH0_AUDIENCE                  = var.auth0_audience
+    SERVICE_BUS_TOPIC_STATUS         = module.service_bus.topic_name
+    SERVICE_BUS_STATUS_SUBSCRIPTION  = "status-writer"
+    AZURE_BLOB_CONTAINER             = "docwriter"
+    AUTH0_ISSUER_BASE_URL            = var.auth0_issuer_base_url
+    AUTH0_AUDIENCE                   = var.auth0_audience
   }
   functions_images = {
-    plan-intake     = "${module.container_registry.url}/docwriter-plan-intake:${var.docker_image_version}"
-    intake-resume   = "${module.container_registry.url}/docwriter-intake-resume:${var.docker_image_version}"
-    plan            = "${module.container_registry.url}/docwriter-plan:${var.docker_image_version}"
-    write           = "${module.container_registry.url}/docwriter-write:${var.docker_image_version}"
-    review          = "${module.container_registry.url}/docwriter-review:${var.docker_image_version}"
-    verify          = "${module.container_registry.url}/docwriter-verify:${var.docker_image_version}"
-    rewrite         = "${module.container_registry.url}/docwriter-rewrite:${var.docker_image_version}"
-    finalize        = "${module.container_registry.url}/docwriter-finalize:${var.docker_image_version}"
-    status          = "${module.container_registry.url}/docwriter-status:${var.docker_image_version}"
-    diagram-render  = "${module.container_registry.url}/docwriter-diagram-render:${var.docker_image_version}"
-    diagram-prep    = "${module.container_registry.url}/docwriter-diagram-prep:${var.docker_image_version}"
+    plan-intake    = "${module.container_registry.url}/docwriter-plan-intake:${var.docker_image_version}"
+    intake-resume  = "${module.container_registry.url}/docwriter-intake-resume:${var.docker_image_version}"
+    plan           = "${module.container_registry.url}/docwriter-plan:${var.docker_image_version}"
+    write          = "${module.container_registry.url}/docwriter-write:${var.docker_image_version}"
+    review         = "${module.container_registry.url}/docwriter-review:${var.docker_image_version}"
+    verify         = "${module.container_registry.url}/docwriter-verify:${var.docker_image_version}"
+    rewrite        = "${module.container_registry.url}/docwriter-rewrite:${var.docker_image_version}"
+    finalize       = "${module.container_registry.url}/docwriter-finalize:${var.docker_image_version}"
+    status         = "${module.container_registry.url}/docwriter-status:${var.docker_image_version}"
+    diagram-render = "${module.container_registry.url}/docwriter-diagram-render:${var.docker_image_version}"
+    diagram-prep   = "${module.container_registry.url}/docwriter-diagram-prep:${var.docker_image_version}"
   }
   functions_env = {
     OPENAI_BASE_URL                   = var.openai_base_url
@@ -244,6 +264,35 @@ module "app" {
       name                = "app-insights-connection-string"
       env_name            = "APPLICATIONINSIGHTS_CONNECTION_STRING"
       key_vault_secret_id = module.monitoring.app_insights_connection_string_kv_id
+      identity            = azurerm_user_assigned_identity.ca_identity.id
+    }
+  ]
+
+  ui_env = {
+    NEXT_PUBLIC_API_BASE_URL       = "https://aidocwriter-api.gentlecliff-6769fc4f.westeurope.azurecontainerapps.io"
+    AUTH0_BASE_URL                 = "https://aidocwriter-ui.gentlecliff-6769fc4f.westeurope.azurecontainerapps.io"
+    APP_BASE_URL                   = "https://aidocwriter-ui.gentlecliff-6769fc4f.westeurope.azurecontainerapps.io"
+    AUTH0_ISSUER_BASE_URL          = "https://pixelteam.eu.auth0.com"
+    AUTH0_CLIENT_ID                = "IVMRXTH6H6fJa3022IygQI9DLXVpJkYB"
+    AUTH0_AUDIENCE                 = "https://docwriter-api.azureway.cloud"
+    AUTH0_SCOPE                    = "openid profile email api offline_access"
+    NEXT_PUBLIC_AUTH0_AUDIENCE     = "https://docwriter-api.azureway.cloud"
+    NEXT_PUBLIC_AUTH0_SCOPE        = "openid profile email api offline_access"
+    NEXT_PUBLIC_PROFILE_ROUTE      = "/api/auth/me"
+    NEXT_PUBLIC_ACCESS_TOKEN_ROUTE = "/api/auth/access-token"
+  }
+
+  ui_secrets = [
+    {
+      name                = "auth0-client-secret"
+      env_name            = "AUTH0_CLIENT_SECRET"
+      key_vault_secret_id = azurerm_key_vault_secret.auth0_client_secret.versionless_id
+      identity            = azurerm_user_assigned_identity.ca_identity.id
+    },
+    {
+      name                = "auth0-secret"
+      env_name            = "AUTH0_SECRET"
+      key_vault_secret_id = azurerm_key_vault_secret.auth0_secret.versionless_id
       identity            = azurerm_user_assigned_identity.ca_identity.id
     }
   ]

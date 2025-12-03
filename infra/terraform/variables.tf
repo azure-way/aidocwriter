@@ -17,7 +17,7 @@ variable "location" {
 }
 
 variable "plantuml_server_name" {
-  type = string
+  type    = string
   default = "aidocwriter-plantuml"
 }
 
@@ -62,6 +62,16 @@ variable "openai_api_key_secret" {
 
 }
 
+
+variable "auth0_client_secret" {
+  type      = string
+  sensitive = true
+}
+
+variable "auth0_secret" {
+  type      = string
+  sensitive = true
+}
 
 variable "subscription-id" {
   description = "Azure subscription ID"

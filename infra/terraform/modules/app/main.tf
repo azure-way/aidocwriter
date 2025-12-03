@@ -40,7 +40,7 @@ resource "azurerm_container_app" "api" {
       memory = "1Gi"
 
       env {
-        name = "PLANTUML_SERVER_URL"
+        name  = "PLANTUML_SERVER_URL"
         value = "https://aidocwriter-plantuml.${azurerm_container_app_environment.main.default_domain}"
       }
 
@@ -73,7 +73,7 @@ resource "azurerm_container_app" "api" {
     }
 
     cors {
-      allowed_origins    = ["http://localhost:3000"]
+      allowed_origins    = ["http://localhost:3000", "https://aidocwriter-ui.${azurerm_container_app_environment.main.default_domain}"]
       allowed_methods    = ["GET", "POST", "OPTIONS"]
       allowed_headers    = ["*"]
       max_age_in_seconds = 86400
@@ -90,6 +90,80 @@ resource "azurerm_container_app" "api" {
   }
 }
 
+resource "azurerm_container_app" "ui" {
+  for_each = var.ui_images
+
+  name                         = "${var.name_prefix}-${each.key}"
+  resource_group_name          = var.resource_group_name
+  container_app_environment_id = azurerm_container_app_environment.main.id
+  revision_mode                = "Single"
+  tags                         = var.tags
+
+  identity {
+    type         = "SystemAssigned, UserAssigned"
+    identity_ids = [var.managed_identity_id]
+  }
+
+  registry {
+    server   = var.container_registry_login
+    identity = var.managed_identity_id
+  }
+
+  template {
+    container {
+      name   = each.key
+      image  = each.value
+      cpu    = 0.5
+      memory = "1Gi"
+
+
+      dynamic "env" {
+        for_each = var.ui_env
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+
+      dynamic "env" {
+        for_each = var.ui_secrets
+        content {
+          name        = env.value.env_name
+          secret_name = env.value.name
+        }
+      }
+    }
+  }
+
+  ingress {
+    allow_insecure_connections = false
+    external_enabled           = true
+    target_port                = var.ui_ports[each.key]
+
+    traffic_weight {
+      percentage      = 100
+      latest_revision = true
+    }
+
+    # cors {
+    #   allowed_origins    = ["http://localhost:3000"]
+    #   allowed_methods    = ["GET", "POST", "OPTIONS"]
+    #   allowed_headers    = ["*"]
+    #   max_age_in_seconds = 86400
+    # }
+  }
+
+  dynamic "secret" {
+    for_each = var.ui_secrets
+    content {
+      name                = secret.value.name
+      key_vault_secret_id = secret.value.key_vault_secret_id
+      identity            = secret.value.identity
+    }
+  }
+}
+
+
 resource "azurerm_container_app" "functions" {
   for_each = var.functions_images
 
@@ -99,8 +173,8 @@ resource "azurerm_container_app" "functions" {
   revision_mode                = "Single"
   tags                         = var.tags
 
-  workload_profile_name        = "Consumption"
-  
+  workload_profile_name = "Consumption"
+
   identity {
     type         = "SystemAssigned, UserAssigned"
     identity_ids = [var.managed_identity_id]
@@ -133,8 +207,8 @@ resource "azurerm_container_app" "functions" {
       }
 
       env {
-        name = "PLANTUML_SERVER_URL"
-                value = "https://${var.plantuml_server_name}.${azurerm_container_app_environment.main.default_domain}"
+        name  = "PLANTUML_SERVER_URL"
+        value = "https://${var.plantuml_server_name}.${azurerm_container_app_environment.main.default_domain}"
       }
 
       dynamic "env" {

@@ -34,7 +34,35 @@ variable "api_env" {
 variable "api_ports" {
   type    = map(number)
   default = {}
-  
+
+}
+
+variable "ui_images" {
+  description = "Map of UI container images"
+  type        = map(string)
+  default     = {}
+}
+
+variable "ui_ports" {
+  description = "Map of UI container ports"
+  type        = map(number)
+  default     = {}
+}
+
+variable "ui_env" {
+  type    = map(string)
+  default = {}
+}
+
+variable "ui_secrets" {
+  description = "Secrets for the UI container app"
+  type = list(object({
+    name                = string
+    env_name            = string
+    key_vault_secret_id = string
+    identity            = string
+  }))
+  default = []
 }
 
 variable "functions_env" {
@@ -66,6 +94,6 @@ variable "api_secrets" {
 
 
 variable "plantuml_server_name" {
-  type = string
+  type    = string
   default = "aidocwriter-plantuml"
 }
