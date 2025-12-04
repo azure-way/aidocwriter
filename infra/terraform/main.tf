@@ -109,6 +109,22 @@ resource "azurerm_role_assignment" "open_ai_key_secret_reader" {
   depends_on = [module.storage]
 }
 
+resource "azurerm_role_assignment" "auth0_client_secret_secret_reader" {
+  scope                = azurerm_key_vault_secret.auth0_client_secret.resource_versionless_id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_user_assigned_identity.ca_identity.principal_id
+
+  depends_on = [module.storage]
+}
+
+resource "azurerm_role_assignment" "auth0_secret_secret_reader" {
+  scope                = azurerm_key_vault_secret.auth0_secret.resource_versionless_id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_user_assigned_identity.ca_identity.principal_id
+
+  depends_on = [module.storage]
+}
+
 module "monitoring" {
   source              = "./modules/monitoring"
   name_prefix         = local.name_prefix
