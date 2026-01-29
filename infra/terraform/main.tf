@@ -197,7 +197,7 @@ module "app" {
   }
 
   ui_ports = {
-    ui = 80
+    ui = 3000
   }
 
   api_env = {
@@ -217,6 +217,7 @@ module "app" {
     SERVICE_BUS_STATUS_SUBSCRIPTION  = "status-writer"
     AZURE_BLOB_CONTAINER             = "docwriter"
     AUTH0_ISSUER_BASE_URL            = var.auth0_issuer_base_url
+    AUTH0_DOMAIN                     = var.auth0_issuer_base_url
     AUTH0_AUDIENCE                   = var.auth0_audience
   }
   functions_images = {

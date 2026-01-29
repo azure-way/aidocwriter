@@ -816,7 +816,11 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
         <GlassCard className="space-y-4 text-slate-800">
           <h2 className="text-2xl font-semibold text-slate-900">Sign in required</h2>
           <p className="text-slate-600">Your session expired. Please sign in again to continue.</p>
-          <Link href="/api/auth/login?returnTo=/workspace" className="btn-primary w-full sm:w-auto">
+          <Link
+            href="/api/auth/login?returnTo=/workspace"
+            prefetch={false}
+            className="btn-primary w-full sm:w-auto"
+          >
             Go to sign in
           </Link>
           {authError ? <p className="text-sm text-red-500">{authError.message}</p> : null}

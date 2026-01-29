@@ -25,12 +25,14 @@ export function AuthControls() {
       <div className="flex flex-wrap gap-3">
         <Link
           href={baseLogin}
+          prefetch={false}
           className="inline-flex items-center justify-center whitespace-nowrap rounded-full bg-gradient-to-r from-fuchsia-500 via-purple-500 to-sky-500 px-7 py-3 text-base font-semibold text-white shadow-[0_22px_45px_rgba(109,40,217,0.35)] transition hover:scale-105"
         >
           {error ? "Try again" : "Sign in"}
         </Link>
         <Link
           href={`${baseLogin}&screen_hint=signup`}
+          prefetch={false}
           className="inline-flex items-center justify-center whitespace-nowrap rounded-full border border-white/70 px-7 py-3 text-base font-semibold text-slate-800 shadow-[0_12px_25px_rgba(15,23,42,0.15)] transition hover:bg-white"
         >
           Create account
