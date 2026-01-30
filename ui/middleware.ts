@@ -30,6 +30,7 @@ export async function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     "/api/auth/:path*",
+    "/auth/:path*",
     "/workspace",
     "/workspace/:path*",
     "/newdocument",
