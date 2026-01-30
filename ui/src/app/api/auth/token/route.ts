@@ -31,11 +31,23 @@ export async function GET(request: NextRequest) {
     const { response, token } = await obtainToken(request);
     const body = NextResponse.json({ accessToken: token.token, scope: token.scope });
     response.cookies.getAll().forEach((cookie) => {
-      body.cookies.set(cookie);
+      try {
+        body.cookies.set(cookie);
+      } catch (err) {
+        console.error("Failed to copy auth cookie", {
+          cookie: cookie.name,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
     });
     return body;
   } catch (error: unknown) {
-    const err = (typeof error === "object" && error) ? (error as { status?: number; message?: string }) : {};
+    const err = (typeof error === "object" && error) ? (error as { status?: number; message?: string; code?: string }) : {};
+    console.error("Access token fetch failed", {
+      status: err.status,
+      message: err.message,
+      code: err.code,
+    });
     const status = err.status ?? 401;
     const message = err.message ?? "Unable to fetch access token";
     return NextResponse.json({ error: message }, { status });

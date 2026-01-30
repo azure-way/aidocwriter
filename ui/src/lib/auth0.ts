@@ -6,6 +6,8 @@ export const auth0 = new Auth0Client({
   clientId: process.env.AUTH0_CLIENT_ID,
   clientSecret: process.env.AUTH0_CLIENT_SECRET,
   secret: process.env.AUTH0_SECRET,
+  // Return 204 for unauthenticated profile requests so public pages don't see errors
+  noContentProfileResponseWhenUnauthenticated: true,
   routes: {
     login: "/api/auth/login",
     logout: "/api/auth/logout",
