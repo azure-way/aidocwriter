@@ -295,8 +295,8 @@ module "app" {
     AUTH0_SCOPE                    = "openid profile email api offline_access"
     NEXT_PUBLIC_AUTH0_AUDIENCE     = "https://docwriter-api.azureway.cloud"
     NEXT_PUBLIC_AUTH0_SCOPE        = "openid profile email api offline_access"
-    NEXT_PUBLIC_PROFILE_ROUTE      = "/api/auth/me"
-    NEXT_PUBLIC_ACCESS_TOKEN_ROUTE = "/api/auth/access-token"
+    NEXT_PUBLIC_PROFILE_ROUTE      = "/auth/profile"
+    NEXT_PUBLIC_ACCESS_TOKEN_ROUTE = "/auth/access-token"
   }
 
   ui_secrets = [
