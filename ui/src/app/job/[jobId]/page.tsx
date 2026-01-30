@@ -1,12 +1,13 @@
 import { JobDashboard } from "../../newdocument/page";
 
 type JobPageProps = {
-  params: {
+  params: Promise<{
     jobId: string;
-  };
+  }>;
 };
 
-export default function JobPage({ params }: JobPageProps) {
-  const jobId = decodeURIComponent(params.jobId);
+export default async function JobPage({ params }: JobPageProps) {
+  const resolved = await params;
+  const jobId = decodeURIComponent(resolved.jobId);
   return <JobDashboard initialJobId={jobId} />;
 }
