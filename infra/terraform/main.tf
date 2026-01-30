@@ -286,8 +286,8 @@ module "app" {
 
   ui_env = {
     NEXT_PUBLIC_API_BASE_URL       = "https://aidocwriter-api.gentlecliff-6769fc4f.westeurope.azurecontainerapps.io"
-    AUTH0_BASE_URL                 = "https://aidocwriter-ui.gentlecliff-6769fc4f.westeurope.azurecontainerapps.io"
-    APP_BASE_URL                   = "https://aidocwriter-ui.gentlecliff-6769fc4f.westeurope.azurecontainerapps.io"
+    AUTH0_BASE_URL                 = "https://docwriter-studio.azureway.cloud"
+    APP_BASE_URL                   = "https://docwriter-studio.azureway.cloud"
     AUTH0_ISSUER_BASE_URL          = "https://pixelteam.eu.auth0.com"
     AUTH0_DOMAIN                   = "https://pixelteam.eu.auth0.com"
     AUTH0_CLIENT_ID                = "IVMRXTH6H6fJa3022IygQI9DLXVpJkYB"

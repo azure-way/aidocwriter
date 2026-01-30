@@ -73,7 +73,7 @@ resource "azurerm_container_app" "api" {
     }
 
     cors {
-      allowed_origins    = ["http://localhost:3000", "https://aidocwriter-ui.${azurerm_container_app_environment.main.default_domain}"]
+      allowed_origins    = ["http://localhost:3000", "https://aidocwriter-ui.${azurerm_container_app_environment.main.default_domain}", "https://docwriter-studio.azureway.cloud"]
       allowed_methods    = ["GET", "POST", "OPTIONS"]
       allowed_headers    = ["*"]
       max_age_in_seconds = 86400
@@ -146,7 +146,7 @@ resource "azurerm_container_app" "ui" {
     }
 
     # cors {
-    #   allowed_origins    = ["http://localhost:3000"]
+    #   allowed_origins    = ["http://localhost:3000", "https://docwriter-studio.azureway.cloud"]
     #   allowed_methods    = ["GET", "POST", "OPTIONS"]
     #   allowed_headers    = ["*"]
     #   max_age_in_seconds = 86400
