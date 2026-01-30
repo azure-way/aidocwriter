@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 const navItems = [
   { href: "/", label: "Home" },
   { href: "/features", label: "Features" },
-  { href: "/workspace", label: "Workspace" },
+  { href: "/workspace", label: "Workspace", prefetch: false },
 ];
 
 export default function RootLayout({
@@ -36,6 +36,7 @@ export default function RootLayout({
                     <Link
                       key={item.href}
                       href={item.href}
+                      prefetch={item.prefetch ?? true}
                       className="rounded-full border border-transparent bg-white/50 px-6 py-2.5 text-slate-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition hover:border-slate-300 hover:bg-white hover:text-slate-900"
                     >
                       {item.label}
