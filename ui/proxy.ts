@@ -9,7 +9,7 @@ const LOGIN_PATH = "/api/auth/login";
 const isProtected = (pathname: string) =>
   PROTECTED_PATHS.some((base) => pathname === base || pathname.startsWith(`${base}/`));
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const authResponse = await auth0.middleware(request);
 
   const pathname = request.nextUrl.pathname;
@@ -31,6 +31,8 @@ export const config = {
   matcher: [
     "/api/auth/:path*",
     "/auth/:path*",
+    "/auth/profile",
+    "/auth/access-token",
     "/workspace",
     "/workspace/:path*",
     "/newdocument",
