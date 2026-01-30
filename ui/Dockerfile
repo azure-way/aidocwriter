@@ -2,6 +2,13 @@
 
 FROM node:20-alpine AS base
 
+# Build-time public env vars that must be embedded into the Next.js client bundle
+ARG NEXT_PUBLIC_API_BASE_URL
+ARG NEXT_PUBLIC_AUTH0_AUDIENCE
+ARG NEXT_PUBLIC_AUTH0_SCOPE
+ARG NEXT_PUBLIC_PROFILE_ROUTE
+ARG NEXT_PUBLIC_ACCESS_TOKEN_ROUTE
+
 # Install dependencies only when needed
 FROM base AS deps
 # Check https://github.com/nodejs/docker-node/tree/b4117f9333da4138b03a546ec926ef50a31506c3#nodealpine to understand why libc6-compat might be needed.
@@ -26,6 +33,18 @@ FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY ui/. ./
+
+# Expose build args to Next.js so client bundle gets correct public env values
+ARG NEXT_PUBLIC_API_BASE_URL
+ARG NEXT_PUBLIC_AUTH0_AUDIENCE
+ARG NEXT_PUBLIC_AUTH0_SCOPE
+ARG NEXT_PUBLIC_PROFILE_ROUTE
+ARG NEXT_PUBLIC_ACCESS_TOKEN_ROUTE
+ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
+ENV NEXT_PUBLIC_AUTH0_AUDIENCE=${NEXT_PUBLIC_AUTH0_AUDIENCE}
+ENV NEXT_PUBLIC_AUTH0_SCOPE=${NEXT_PUBLIC_AUTH0_SCOPE}
+ENV NEXT_PUBLIC_PROFILE_ROUTE=${NEXT_PUBLIC_PROFILE_ROUTE}
+ENV NEXT_PUBLIC_ACCESS_TOKEN_ROUTE=${NEXT_PUBLIC_ACCESS_TOKEN_ROUTE}
 
 # Next.js collects completely anonymous telemetry data about general usage.
 # Learn more here: https://nextjs.org/telemetry
