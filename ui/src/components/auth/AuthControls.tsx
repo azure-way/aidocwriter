@@ -61,7 +61,11 @@ export function AuthControls() {
         <span className="text-sm font-semibold text-slate-800">{user.name ?? user.email}</span>
         <span className="text-xs text-slate-500">Authenticated</span>
       </div>
-      <Link href="/api/auth/logout" className="text-xs font-semibold text-slate-500 hover:text-slate-900">
+      <Link
+        href="/api/auth/logout"
+        prefetch={false}
+        className="text-xs font-semibold text-slate-500 hover:text-slate-900"
+      >
         Sign out
       </Link>
     </div>
