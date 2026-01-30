@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useUser } from "@auth0/nextjs-auth0/client";
@@ -11,6 +12,14 @@ export function AuthControls() {
   const audienceParam = audience ? `&audience=${encodeURIComponent(audience)}` : "";
   const scopeParam = scope ? `&scope=${encodeURIComponent(scope)}` : "";
   const baseLogin = `/api/auth/login?returnTo=/workspace${audienceParam}${scopeParam}`;
+
+  useEffect(() => {
+    if (error) {
+      // Surface Auth0 hook errors for easier debugging in hosted environments
+      // eslint-disable-next-line no-console
+      console.error("AuthControls useUser error", error);
+    }
+  }, [error]);
 
   if (isLoading) {
     return (
