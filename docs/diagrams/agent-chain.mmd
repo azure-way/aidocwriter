@@ -1,0 +1,26 @@
+```mermaid
+flowchart TD
+  Intake[Interviewer\n(PLAN_INTAKE)] --> Resume[Resume Intake\n(INTAKE_RESUME)]
+  Resume --> Planner[Planner\n(PLAN)]
+  Planner --> Writer[Writer\n(WRITE)]
+  Writer --> Reviewer[Reviewers\n(REVIEW: general/style/cohesion/exec)]
+  Reviewer --> Verifier[Verifier\n(VERIFY)]
+  Verifier -->|Needs rewrite| Rewriter[Rewriter\n(REWRITE)]
+  Rewriter --> Reviewer
+  Verifier -->|Clean| DiagramPrep[Diagram Prep\n(DIAGRAM)]
+  DiagramPrep --> DiagramRender[Diagram Render\n(DIAGRAM)]
+  DiagramRender --> Finalize[Finalizer\n(FINALIZE)]
+  Finalize --> Artifact[Artifacts\nMarkdown/PDF/DOCX]
+
+  subgraph Agents
+    Intake
+    Planner
+    Writer
+    Reviewer
+    Verifier
+    Rewriter
+    DiagramPrep
+    DiagramRender
+    Finalize
+  end
+```

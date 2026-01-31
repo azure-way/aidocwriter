@@ -66,6 +66,8 @@ def _apply_diagram_results(text: str, results: List[Dict[str, Any]], job_paths: 
         return text
 
     updated = text
+    fallback_pattern = re.compile(r"```plantuml\s+([\s\S]*?)```", flags=re.IGNORECASE)
+    inline_uml_pattern = re.compile(r"@startuml[\s\S]*?@enduml", flags=re.IGNORECASE)
     root_prefix = f"{job_paths.root}/"
     for item in results:
         code_block = item.get("code_block")
@@ -76,9 +78,25 @@ def _apply_diagram_results(text: str, results: List[Dict[str, Any]], job_paths: 
         diagram_id = item.get("diagram_id")
         alt_text = item.get("alt_text") or (f"Diagram {diagram_id}" if diagram_id else "Diagram")
         replacement = f"![{alt_text}]({relative_path})"
+        replaced = False
         if code_block in updated:
             updated = updated.replace(code_block, replacement, 1)
-        else:
+            replaced = True
+        if not replaced and diagram_id:
+            for match in fallback_pattern.finditer(updated):
+                block = match.group(0)
+                if f"diagram_id: {diagram_id}" in block or f"diagram_id:{diagram_id}" in block:
+                    updated = updated.replace(block, replacement, 1)
+                    replaced = True
+                    break
+        if not replaced and diagram_id:
+            for match in inline_uml_pattern.finditer(updated):
+                block = match.group(0)
+                if f"diagram_id: {diagram_id}" in block or f"diagram_id:{diagram_id}" in block:
+                    updated = updated.replace(block, replacement, 1)
+                    replaced = True
+                    break
+        if not replaced:
             logging.warning(
                 "Diagram block not found during finalize for job %s: %s",
                 job_paths.job_id,

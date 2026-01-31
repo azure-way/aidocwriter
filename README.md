@@ -19,56 +19,68 @@
 
 ## Technical Overview
 - Generates long, consistent Markdown documents (>60 pages) with Mermaid and PlantUML diagrams rendered into PNG/SVG.
-- Agentic pipeline: Planner (o3), Writer (gpt-4.1), Reviewer set (o3: general + style + cohesion + executive summary).
+- Agentic pipeline: Planner (o3), Writer (gpt-5.2), Reviewer set (o3: general + style + cohesion + executive summary).
 - Queue-driven architecture on Azure Service Bus; artifacts stored in Azure Blob Storage.
 - Dedicated diagram-prep/render stages ensure graphics exist before finalize/PDF/DOCX export and surface progress in the timeline UI.
 - REST-first workflow: jobs are created and monitored via FastAPI; Azure Functions host each worker stage.
 - Interactive intake: collects detailed requirements before planning for higher quality output.
 
 ## Quick Start
-1) Install dependencies (local development)
-   - Python 3.10+
-   - Create a virtualenv, then:
-     ```bash
-     pip install -e .[dev]
-     npm install --prefix ui
-     ```
-   - PDF export uses WeasyPrint; install its system dependencies (Cairo, Pango). See https://weasyprint.readthedocs.io/en/stable/install/.
-2) Configure environment variables
-   - Export credentials and queue names before running workers, the API, or Functions. Example:
-     ```bash
-     export OPENAI_API_KEY=...
-     export OPENAI_BASE_URL=...
-     export OPENAI_API_VERSION=...
-     export SERVICE_BUS_CONNECTION_STRING=...
-     export SERVICE_BUS_QUEUE_PLAN_INTAKE=docwriter-plan-intake
-     export SERVICE_BUS_QUEUE_INTAKE_RESUME=docwriter-intake-resume
-     export SERVICE_BUS_QUEUE_PLAN=docwriter-plan
-     export SERVICE_BUS_QUEUE_WRITE=docwriter-write
-     export SERVICE_BUS_QUEUE_REVIEW=docwriter-review
-     export SERVICE_BUS_QUEUE_VERIFY=docwriter-verify
-    export SERVICE_BUS_QUEUE_REWRITE=docwriter-rewrite
-    export SERVICE_BUS_QUEUE_DIAGRAM_PREP=docwriter-diagram-prep
-    export SERVICE_BUS_QUEUE_DIAGRAM_RENDER=docwriter-diagram-render
-    export SERVICE_BUS_QUEUE_FINALIZE_READY=docwriter-finalize-ready
-     export SERVICE_BUS_TOPIC_STATUS=docwriter-status
-     export SERVICE_BUS_STATUS_SUBSCRIPTION=status-writer
-     export AZURE_STORAGE_CONNECTION_STRING=...
-    export AZURE_BLOB_CONTAINER=docwriter
-    export PLANTUML_SERVER_URL=https://plantuml.example.com
-     export DOCWRITER_PLANTUML_REFORMAT_MODEL=gpt-5 # optional, defaults to gpt-5 in Azure OpenAI
-     export APPINSIGHTS_INSTRUMENTATION_KEY=... # optional, enables Application Insights telemetry
-     ```
-   - Optional overrides: `DOCWRITER_PLANNER_MODEL`, `DOCWRITER_WRITER_MODEL`, `DOCWRITER_STREAM`, etc. See `src/docwriter/config.py` for the full list.
-3) Run locally (API + Functions)
-   - Start the API: `uvicorn api.main:app --reload`
-   - Start Functions host (needs Azure Functions Core Tools):
-     ```bash
-     cd src/functions_plan_intake && func start
-     # repeat per function or package with Container Apps
-     ```
-   - Run the Next.js UI: `npm run dev --prefix ui` (requires `NEXT_PUBLIC_API_BASE_URL`)
-   - For lightweight development, you can invoke workers directly via `python -m docwriter.queue` helper functions or tests.
+1) Prerequisites
+   - Python 3.10+, Node.js 18+, Azure CLI, Azure Functions Core Tools.
+   - OpenAI/Azure OpenAI models: planner/reviewer/writer default to `gpt-5.2`/`gpt-4.1`; PlantUML reformat model defaults to `gpt-5`.
+   - WeasyPrint native deps (Cairo, Pango) for PDF export: https://weasyprint.readthedocs.io/en/stable/install/.
+2) Install dependencies
+   ```bash
+   python -m venv .venv && source .venv/bin/activate
+   pip install -e .[dev]        # builds/installs docwriter library
+   npm install --prefix ui
+   ```
+3) Configure environment variables
+   ```bash
+   export OPENAI_API_KEY=...
+   export OPENAI_BASE_URL=...
+   export OPENAI_API_VERSION=...
+   export SERVICE_BUS_CONNECTION_STRING=...
+   export SERVICE_BUS_QUEUE_PLAN_INTAKE=docwriter-plan-intake
+   export SERVICE_BUS_QUEUE_INTAKE_RESUME=docwriter-intake-resume
+   export SERVICE_BUS_QUEUE_PLAN=docwriter-plan
+   export SERVICE_BUS_QUEUE_WRITE=docwriter-write
+   export SERVICE_BUS_QUEUE_REVIEW=docwriter-review
+   export SERVICE_BUS_QUEUE_VERIFY=docwriter-verify
+   export SERVICE_BUS_QUEUE_REWRITE=docwriter-rewrite
+   export SERVICE_BUS_QUEUE_DIAGRAM_PREP=docwriter-diagram-prep
+   export SERVICE_BUS_QUEUE_DIAGRAM_RENDER=docwriter-diagram-render
+   export SERVICE_BUS_QUEUE_FINALIZE_READY=docwriter-finalize-ready
+   export SERVICE_BUS_TOPIC_STATUS=docwriter-status
+   export SERVICE_BUS_STATUS_SUBSCRIPTION=status-writer
+   export AZURE_STORAGE_CONNECTION_STRING=...
+   export AZURE_BLOB_CONTAINER=docwriter
+   export PLANTUML_SERVER_URL=https://plantuml.example.com/plantuml
+   export DOCWRITER_PLANTUML_REFORMAT_MODEL=gpt-5   # optional
+   export APPINSIGHTS_INSTRUMENTATION_KEY=...       # optional
+   export NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+   ```
+4) Run locally (API + Functions + UI)
+   ```bash
+   # API
+   uvicorn api.main:app --reload
+
+   # Functions (per stage, in parallel tabs)
+   cd src/functions_plan_intake && func start
+   cd ../functions_plan && func start
+   cd ../functions_write && func start
+   cd ../functions_review && func start
+   cd ../functions_verify && func start
+   cd ../functions_rewrite && func start
+   cd ../functions_diagram_prep && func start
+   cd ../functions_diagram_render && func start
+   cd ../functions_finalize && func start
+
+   # UI
+   npm run dev --prefix ui
+   ```
+   For lightweight testing, you can enqueue messages directly: `python -m docwriter.queue --queue plan --message-file samples/plan.json`.
 
 ## Stage-by-Stage Pipeline
 1. **Intake Questions (`PLAN_INTAKE`)** – Interviewer agent drafts clarifying questions; responses land in `jobs/{job_id}/intake/`.
@@ -106,12 +118,16 @@
 - Agents
   - Planner (o3): Produces a structured document plan, outline, glossary, constraints, and diagram specs.
   - Writer (gpt-4.1): Writes section-by-section with a shared memory (style + facts) to maintain consistency.
+  - Verifier (o3): Checks contradictions against dependency summaries and flags required rewrites.
+  - Rewriter (o3): Applies targeted rewrites using verifier + reviewer guidance.
   - Reviewers (o3):
     - General reviewer: contradictions and quality with revised draft.
     - Style reviewer: clarity, tone, readability.
     - Cohesion reviewer: flow, transitions, cross-references.
     - Executive summary reviewer: summary quality.
   - Interviewer (o3): Conducts an intake to gather goals, audience specifics, constraints, and preferences.
+  - Diagram formatter: Cleans PlantUML and ensures valid syntax before render.
+  - Finalizer: Applies rendered diagrams, numbers headings, preserves links, and emits PDF/DOCX.
 - Stage workers
   - PLAN_INTAKE (questions to Blob) → INTAKE_RESUME (user answers) → PLAN → WRITE → REVIEW (incl. style/cohesion/exec) → VERIFY → REWRITE → back to REVIEW (loop by cycles) → VERIFY → FINALIZE
   - Enforces dependency-aware order and performs contradiction verification and targeted rewrites.
@@ -150,6 +166,13 @@ flowchart LR
         N --> O([worker-rewrite])
         O --> J
         M -->|Clean or cycles exhausted| P{{Queue: finalize}}
+        I -.-> X{{Queue: diagram-prep}}
+        X --> Y([worker-diagram-prep
+        sanitize PlantUML])
+        Y --> Z{{Queue: diagram-render}}
+        Z --> AA([worker-diagram-render
+        PlantUML server])
+        AA --> P
     end
 
     P --> Q([worker-finalize
@@ -209,16 +232,7 @@ Documentation and deployment scripts will be updated as those components land.
   - Added per-document metadata (cycle counts, last error, artifact availability) stored via the Azure Table index.
   - Workspace list now supports search, status filters, manual refresh, and “Resume” actions for failed jobs with download buttons for final artifacts.
   - Job creation moved to `/newdocument`, keeping the workspace dedicated to portfolio tracking.
-
-### Upcoming Phases
-- **Phase 5 – Access Control & Notifications**
-  - each user have its own directory in the Storage ie. jobs/{user_id}/{job_id}
-  - path for jobs/{user_id} is accessbily only by the certain user
-  - Enforce per-document ACLs (creator is owner) persisted alongside metadata so only authorized users can query `/jobs` or fetch artifacts.
-
-These phases are not implemented yet; they outline the roadmap for future sessions.
-Future phases will extend the hub with richer metadata, filtering, and collaborative features.
-
+xw
 Diagrams
 - The plan/review stages emit PlantUML blocks (` ```plantuml` or `@startuml…@enduml`).
 - Diagram-prep extracts these blocks and the diagram-render worker calls your PlantUML server (`PLANTUML_SERVER_URL`), storing PNG/SVG files under `jobs/<job_id>/images/`.
