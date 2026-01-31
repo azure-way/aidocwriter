@@ -127,8 +127,6 @@ def _render_with_plantuml(source: str | bytes, fmt: str) -> bytes:
     if not server_url:
         raise DiagramRenderError("PLANTUML_SERVER_URL not configured")
 
-
-
     last_exc: Exception | None = None
     last_source = source
     for attempt in range(3):
