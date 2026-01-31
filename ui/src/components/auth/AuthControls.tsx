@@ -13,14 +13,6 @@ export function AuthControls() {
   const scopeParam = scope ? `&scope=${encodeURIComponent(scope)}` : "";
   const baseLogin = `/api/auth/login?returnTo=/workspace${audienceParam}${scopeParam}`;
 
-  useEffect(() => {
-    if (error) {
-      // Surface Auth0 hook errors for easier debugging in hosted environments
-      // eslint-disable-next-line no-console
-      console.error("AuthControls useUser error", error);
-    }
-  }, [error]);
-
   if (isLoading) {
     return (
       <span className="rounded-full border border-white/60 bg-white/70 px-6 py-2 text-sm font-semibold text-slate-500">
