@@ -21,6 +21,7 @@ from docwriter.messaging import publish_stage_event, publish_status, send_queue_
 from docwriter.models import StatusEvent
 from docwriter.stage_utils import (
     find_placeholder_sections,
+    insert_table_of_contents,
     merge_revised_markdown,
     number_markdown_headings,
     parse_review_guidance,
@@ -761,6 +762,7 @@ def process_finalize(data: Dict[str, Any]) -> None:
                 job_paths,
             )
             final_text = number_markdown_headings(final_text)
+            final_text = insert_table_of_contents(final_text)
             store.put_text(blob=job_paths.final("md"), text=final_text)
             pdf_bytes = export_pdf(final_text, {}, store, job_paths)
             if pdf_bytes:

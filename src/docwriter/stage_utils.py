@@ -10,6 +10,10 @@ HEADING_RE = re.compile(r"^(?P<hashes>#{1,6})\s+(?P<text>.+)$")
 HEADING_NUMBER_PREFIX_RE = re.compile(r"^\d+(?:\.\d+)*(?:\.)?\s+")
 TITLE_PAGE_START = "<!-- TITLE_PAGE_START -->"
 TITLE_PAGE_END = "<!-- TITLE_PAGE_END -->"
+TOC_START = "<!-- TABLE_OF_CONTENTS_START -->"
+TOC_END = "<!-- TABLE_OF_CONTENTS_END -->"
+SLUG_INVALID_RE = re.compile(r"[^a-z0-9\- ]+", re.IGNORECASE)
+SLUG_SEP_RE = re.compile(r"[\s\-]+")
 
 
 def extract_sections(text: str) -> Dict[str, str]:
@@ -154,3 +158,58 @@ def number_markdown_headings(markdown: str) -> str:
         numbered_lines.append(numbered_line)
 
     return "\n".join(numbered_lines) + trailing_newline
+
+
+def _slugify_heading(text: str) -> str:
+    normalized = SLUG_INVALID_RE.sub("", text or "")
+    normalized = normalized.lower()
+    parts = [part for part in SLUG_SEP_RE.split(normalized) if part]
+    return "-".join(parts) or "section"
+
+
+def insert_table_of_contents(markdown: str) -> str:
+    """Insert a TOC after the title page (or at the top) with anchors matching heading IDs."""
+    if TOC_START in markdown:
+        return markdown
+
+    lines = markdown.splitlines()
+    in_code = False
+    in_title = False
+    headings: list[Tuple[int, str, str]] = []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_code = not in_code
+            continue
+        if in_code:
+            continue
+        if TITLE_PAGE_START in line:
+            in_title = True
+            continue
+        if TITLE_PAGE_END in line:
+            in_title = False
+            continue
+        match = HEADING_RE.match(line)
+        if not match or in_title:
+            continue
+        level = len(match.group("hashes"))
+        text = match.group("text").strip()
+        slug = _slugify_heading(text)
+        headings.append((level, text, slug))
+
+    if not headings:
+        return markdown
+
+    toc_lines = [TOC_START, "## Table of Contents"]
+    for level, text, slug in headings:
+        indent = "  " * max(0, level - 2)
+        toc_lines.append(f"{indent}- [{text}](#{slug})")
+    toc_lines.append(TOC_END)
+    toc_block = "\n".join(toc_lines) + "\n\n"
+
+    if TITLE_PAGE_END in markdown:
+        insert_at = markdown.index(TITLE_PAGE_END) + len(TITLE_PAGE_END)
+        return markdown[:insert_at] + "\n\n" + toc_block + markdown[insert_at:]
+
+    return toc_block + markdown

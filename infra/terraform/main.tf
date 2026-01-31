@@ -249,7 +249,7 @@ module "app" {
     SERVICE_BUS_STATUS_SUBSCRIPTION   = "status-writer"
     AZURE_BLOB_CONTAINER              = "docwriter"
     DOCWRITER_STATUS_TABLE            = "DocWriterStatus"
-    DOCWRITER_PLANTUML_REFORMAT_MODEL = "gpt-5.1"
+    DOCWRITER_PLANTUML_REFORMAT_MODEL = "gpt-5.2"
   }
   api_secrets = [
     {

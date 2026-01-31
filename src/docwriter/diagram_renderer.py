@@ -127,20 +127,28 @@ def _render_with_plantuml(source: str | bytes, fmt: str) -> bytes:
     if not server_url:
         raise DiagramRenderError("PLANTUML_SERVER_URL not configured")
 
-    uml_source = _reformat_plantuml_text(source)
-    endpoint = f"{server_url.rstrip('/')}/{fmt}"
 
-    try:
-        response = requests.post(
-            endpoint,
-            data=uml_source.encode("utf-8"),
-            headers={"Content-Type": "text/plain; charset=utf-8"},
-            timeout=30,
-        )
-        response.raise_for_status()
-        return response.content
-    except Exception as exc:  # pragma: no cover - defensive
-        raise DiagramRenderError(f"PlantUML rendering failed: {exc}") from exc
+
+    last_exc: Exception | None = None
+    last_source = source
+    for attempt in range(3):
+        try:
+            uml_source = _reformat_plantuml_text(last_source)
+            last_source = uml_source
+            endpoint = f"{server_url.rstrip('/')}/{fmt}"
+
+            response = requests.post(
+                endpoint,
+                data=uml_source.encode("utf-8"),
+                headers={"Content-Type": "text/plain; charset=utf-8"},
+                timeout=30,
+            )
+
+            response.raise_for_status()
+            return response.content
+        except Exception as exc:  # pragma: no cover - defensive
+            last_exc = exc
+    raise DiagramRenderError(f"PlantUML rendering failed after 3 attempts: {last_exc}") from last_exc
 
 
 def process_diagram_render(data: Dict[str, Any]) -> None:
