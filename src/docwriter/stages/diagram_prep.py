@@ -23,6 +23,8 @@ def _sanitize_source(body: str) -> str:
     started = False
     for line in lines:
         stripped = line.strip()
+        if stripped.startswith("```"):
+            continue
         if not started:
             if stripped.lower().startswith("@startuml"):
                 sanitized.append(line)
@@ -45,6 +47,24 @@ def _sanitize_source(body: str) -> str:
             text += "\n"
         text += "@enduml"
     return text
+
+
+def _validate_plantuml_source(source: str) -> List[str]:
+    issues: List[str] = []
+    lower = source.lower()
+    if "@startuml" not in lower:
+        issues.append("missing @startuml")
+    if "@enduml" not in lower:
+        issues.append("missing @enduml")
+    if "```" in source:
+        issues.append("contains markdown code fences inside PlantUML")
+    if "@startmermaid" in lower or "```mermaid" in lower:
+        issues.append("contains Mermaid instead of PlantUML")
+    stripped = re.sub(r"@startuml", "", source, flags=re.IGNORECASE)
+    stripped = re.sub(r"@enduml", "", stripped, flags=re.IGNORECASE).strip()
+    if not stripped:
+        issues.append("empty diagram body")
+    return issues
 
 
 def _extract_diagrams(markdown: str) -> List[Tuple[str, str]]:
@@ -147,6 +167,20 @@ def process_diagram_prep(data: Dict[str, Any]) -> None:
             alt_text = f"Diagram {diagram_id}"
         blob_path = job_paths.images(f"{safe_id}.{fmt}")
         clean_source = _sanitize_source(body)
+        validation_issues = _validate_plantuml_source(clean_source)
+        if validation_issues:
+            message = "; ".join(validation_issues)
+            publish_stage_event(
+                "DIAGRAM",
+                "FAILED",
+                {"job_id": job_id, "user_id": user_id},
+                extra={"message": f"Invalid PlantUML for {diagram_id}: {message}"},
+            )
+            track_exception(
+                RuntimeError("Invalid PlantUML"),
+                {"job_id": job_id, "diagram_id": diagram_id, "issues": message, "stage": "DIAGRAM_PREP"},
+            )
+            return
         source_blob = job_paths.diagrams(f"{safe_id}.puml")
         try:
             store.put_text(blob=source_blob, text=clean_source)

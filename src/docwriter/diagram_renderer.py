@@ -40,6 +40,25 @@ def _normalize_source_text(source: str | bytes) -> str:
     return stripped
 
 
+def _remove_markdown_fences(text: str) -> str:
+    lines = []
+    for line in text.splitlines():
+        if line.strip().startswith("```"):
+            continue
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _preclean_plantuml_text(source: str | bytes) -> str:
+    """Deterministic cleanup to strip Markdown fences and normalize PlantUML blocks."""
+    text = source.decode("utf-8-sig", errors="replace") if isinstance(source, bytes) else str(source)
+    text = _strip_code_fences(text)
+    text = _remove_markdown_fences(text)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = _normalize_source_text(text)
+    return text
+
+
 _reformat_llm_client: Optional[LLMClient] = None
 
 
@@ -68,7 +87,7 @@ def _strip_code_fences(text: str) -> str:
 
 
 def _reformat_plantuml_text(source: str | bytes) -> str:
-    normalized = _normalize_source_text(source)
+    normalized = _preclean_plantuml_text(source)
     prompt = (
         "Please fix the following PlantUML code so that:\n"
         "- The diagram compiles without errors\n"
@@ -76,7 +95,8 @@ def _reformat_plantuml_text(source: str | bytes) -> str:
         "- Arrow labels stay on a single line\n"
         "- Indentation is consistent\n"
         "- All elements (actors, participants, lifelines, states, etc.) are clearly defined\n"
-        "- The diagram remains functionally identical\n" \
+        "- The diagram remains functionally identical\n"
+        "- Do not convert to Mermaid or any other format\n"
         "Return only the fixed PlantUML without additional commentary or fences."
     )
     messages = [
@@ -97,7 +117,6 @@ def _reformat_plantuml_text(source: str | bytes) -> str:
         formatted = _normalize_source_text(formatted)
         return formatted
     except Exception:
-        raise
         return normalized
 
 

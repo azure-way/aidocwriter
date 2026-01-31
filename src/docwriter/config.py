@@ -39,13 +39,13 @@ def _coerce_float(value: Any, default: float) -> float:
 @dataclass(frozen=True)
 class Settings:
     # Model selection
-    planner_model: str = "o3"
+    planner_model: str = "gpt-5.2"
     planner_api_version: str | None = "2025-04-01-preview"
     planner_use_responses: bool = True
-    reviewer_model: str = "o3"
+    reviewer_model: str = "gpt-5.2"
     reviewer_api_version: str | None = "2025-04-01-preview"
     reviewer_use_responses: bool = True
-    writer_model: str = "gpt-5.1"
+    writer_model: str = "gpt-5.2"
     writer_api_version: str | None = "2025-04-01-preview"
     writer_use_responses: bool = True
 

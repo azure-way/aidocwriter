@@ -297,6 +297,54 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
     return { cycles: mergedCycles };
   }, [sortedTimeline, timelineMeta]);
 
+  const extractParsedMessage = useCallback((event: TimelineEvent) => {
+    const parsedRaw =
+      event.details && typeof event.details === "object"
+        ? (event.details as Record<string, unknown>)["parsed_message"]
+        : null;
+    const parsed =
+      parsedRaw && typeof parsedRaw === "object"
+        ? (parsedRaw as Record<string, unknown>)
+        : null;
+    return parsed;
+  }, []);
+
+  const getTokensFromEvent = useCallback(
+    (event: TimelineEvent): number | null => {
+      const parsed = extractParsedMessage(event);
+      if (typeof parsed?.tokens === "number" && parsed.tokens > 0) {
+        return parsed.tokens;
+      }
+      if (typeof event.details?.tokens === "number" && event.details.tokens > 0) {
+        return event.details.tokens;
+      }
+      return null;
+    },
+    [extractParsedMessage]
+  );
+
+  const applyReviewTokenAggregation = useCallback(
+    (event: TimelineEvent, relatedEvents: TimelineEvent[]): TimelineEvent => {
+      if (normalizeStageName(event.stage ?? "") !== "REVIEW") {
+        return event;
+      }
+      const tokensTotal = relatedEvents.reduce((acc, ev) => acc + (getTokensFromEvent(ev) ?? 0), 0);
+      if (tokensTotal <= 0) {
+        return event;
+      }
+      const parsed = extractParsedMessage(event);
+      const tokensDisplay = tokensTotal.toLocaleString();
+      const nextDetails: Record<string, unknown> = { ...(event.details ?? {}) };
+      nextDetails.tokens = tokensTotal;
+      nextDetails.tokens_display = tokensDisplay;
+      if (parsed) {
+        nextDetails.parsed_message = { ...parsed, tokens: tokensTotal, tokens_display: tokensDisplay };
+      }
+      return { ...event, details: nextDetails };
+    },
+    [extractParsedMessage, getTokensFromEvent]
+  );
+
   const summaryEvents = useMemo(() => {
     const stageEventsByBase = new Map<string, TimelineEvent[]>();
     sortedTimeline.forEach((event) => {
@@ -324,49 +372,61 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
 
       const completionEvent = [...related].reverse().find((entry) => determineEventPhase(entry) === "complete");
       if (completionEvent) {
-        return {
-          ...completionEvent,
-          stage,
-          pending: false,
-          status: "complete" as const,
-          displayStage: formatStage(base),
-          sourceStage: completionEvent.stage,
-        };
+        return applyReviewTokenAggregation(
+          {
+            ...completionEvent,
+            stage,
+            pending: false,
+            status: "complete" as const,
+            displayStage: formatStage(base),
+            sourceStage: completionEvent.stage,
+          },
+          related
+        );
       }
 
       const inProgressEvent = [...related].reverse().find((entry) => determineEventPhase(entry) === "in_progress");
       if (inProgressEvent) {
-        return {
-          ...inProgressEvent,
-          stage,
-          pending: false,
-          status: "active" as const,
-          displayStage: formatStage(base),
-          sourceStage: inProgressEvent.stage,
-        };
+        return applyReviewTokenAggregation(
+          {
+            ...inProgressEvent,
+            stage,
+            pending: false,
+            status: "active" as const,
+            displayStage: formatStage(base),
+            sourceStage: inProgressEvent.stage,
+          },
+          related
+        );
       }
 
       const queuedEvent = [...related].reverse().find((entry) => determineEventPhase(entry) === "queued");
       if (queuedEvent) {
-        return {
-          ...queuedEvent,
-          stage,
-          pending: false,
-          status: "active" as const,
-          displayStage: formatStage(base),
-          sourceStage: queuedEvent.stage,
-        };
+        return applyReviewTokenAggregation(
+          {
+            ...queuedEvent,
+            stage,
+            pending: false,
+            status: "active" as const,
+            displayStage: formatStage(base),
+            sourceStage: queuedEvent.stage,
+          },
+          related
+        );
       }
 
-      return {
-        stage,
-        message: `${formatStage(stage)} pending`,
-        pending: true,
-        status: "pending" as const,
-        displayStage: formatStage(base),
-      } as TimelineEvent;
+      return applyReviewTokenAggregation(
+        {
+          stage,
+          message: `${formatStage(stage)} pending`,
+          pending: true,
+          status: "pending" as const,
+          displayStage: formatStage(base),
+        } as TimelineEvent,
+        related
+      );
     });
-  }, [sortedTimeline, stageOrder, formatStage]);
+  }, [applyReviewTokenAggregation, formatStage, sortedTimeline, stageOrder]);
 
   const summaryEventsToRender = useMemo(() => {
     return summaryEvents.filter((event) => {
@@ -396,14 +456,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
     (event: TimelineEvent): Array<{ label: string; value: string }> => {
       const entries: Array<{ label: string; value: string }> = [];
       const seen = new Set<string>();
-      const parsedRaw =
-        event.details && typeof event.details === "object"
-          ? (event.details as Record<string, unknown>)["parsed_message"]
-          : null;
-      const parsed =
-        parsedRaw && typeof parsedRaw === "object"
-          ? (parsedRaw as Record<string, unknown>)
-          : null;
+      const parsed = extractParsedMessage(event);
 
       const addEntry = (label: string, value: unknown) => {
         if (value == null) return;
@@ -433,8 +486,9 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
         (typeof event.details?.duration_s === "number" ? formatDuration(event.details.duration_s) : null);
       addEntry("Stage Time", durationText);
 
+      const tokensValue = getTokensFromEvent(event);
       const tokensDisplay =
-        (typeof parsed?.tokens === "number" && parsed.tokens > 0 && parsed.tokens.toLocaleString()) ||
+        (typeof tokensValue === "number" && tokensValue > 0 && tokensValue.toLocaleString()) ||
         (parsed?.tokens_display && typeof parsed.tokens_display === "string" && parsed.tokens_display.trim()) ||
         (typeof event.details?.tokens === "number" && event.details.tokens > 0
           ? event.details.tokens.toLocaleString()
@@ -453,7 +507,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
 
       return entries;
     },
-    [formatDuration, formatStage]
+    [extractParsedMessage, formatDuration, formatStage, getTokensFromEvent]
   );
 
   const openArtifact = useCallback(

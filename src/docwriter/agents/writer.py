@@ -53,9 +53,13 @@ class WriterAgent:
             "- For each diagram spec, produce exactly one ```plantuml``` code block.\n"
             "- The first non-blank line inside every PlantUML block must be a single-quote comment"
             " containing \"diagram_id: <diagram_id>\" for the matching spec.\n"
-            "- Ensure that labels/fields/descriptions in diagrams have the escaped new line characters (\\n). For example: wrong: RECTANGLE Dynamics365Sales <<Azure>> as Dynamics 365 \n Sales, correct: RECTANGLE Dynamics365Sales <<Azure>> as Dynamics 365 \\n Sales\n"
-            "- Use the plantuml_prompt or description to choose actors, lifelines, relationships, and to pick a valid PlantUML diagram type.\n"
+            "- Inside every PlantUML block include exactly one @startuml and one @enduml; do not wrap the block in Markdown fences other than ```plantuml.\n"
+            "- Keep all labels and element names on a single line; use explicit \\n escapes instead of real line breaks.\n"
+            "- Do not emit Mermaid, HTML, or Markdown inside PlantUML; stay within valid PlantUML grammar only.\n"
+            "- Use the plantuml_prompt or description to choose actors, lifelines, relationships, and to pick a valid PlantUML diagram type from the reference.\n"
             "- Only emit PlantUML syntax that matches the supported patterns below (ignore unsupported formats).\n"
+            "Good example:\n```plantuml\n' diagram_id: diag-1\n@startuml\nactor User\nUser -> API : Request\nAPI --> User : Response\n@enduml\n```\n"
+            "Bad example (do not do this):\n```plantuml\n@startuml\n```mermaid\nflowchart LR\n@enduml\n```\n"
             f"Supported PlantUML reference:\n{PLANTUML_REFERENCE_TEXT}\n"
         )
         if extra_guidance:
