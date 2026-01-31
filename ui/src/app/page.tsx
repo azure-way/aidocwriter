@@ -69,15 +69,15 @@ export default function HomePage() {
             <dl className="mt-6 grid gap-6 text-white/80 sm:grid-cols-3">
               <div>
                 <dt className="text-xs uppercase tracking-[0.3em]">Avg. delivery speed</dt>
-                <dd className="mt-2 text-3xl font-semibold text-white">3 days</dd>
+                <dd className="mt-2 text-3xl font-semibold text-white">10 minutes</dd>
               </div>
               <div>
-                <dt className="text-xs uppercase tracking-[0.3em]">Documents per month</dt>
-                <dd className="mt-2 text-3xl font-semibold text-white">+120</dd>
+                <dt className="text-xs uppercase tracking-[0.3em]">Pages per document</dt>
+                <dd className="mt-2 text-3xl font-semibold text-white">+50</dd>
               </div>
               <div>
-                <dt className="text-xs uppercase tracking-[0.3em]">Azure regions</dt>
-                <dd className="mt-2 text-3xl font-semibold text-white">6+</dd>
+                <dt className="text-xs uppercase tracking-[0.3em]">AI agents involved</dt>
+                <dd className="mt-2 text-3xl font-semibold text-white">10</dd>
               </div>
             </dl>
           </div>
