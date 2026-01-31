@@ -73,7 +73,7 @@ export default function HomePage() {
               </div>
               <div>
                 <dt className="text-xs uppercase tracking-[0.3em]">Pages per document</dt>
-                <dd className="mt-2 text-3xl font-semibold text-white">+50</dd>
+                <dd className="mt-2 text-3xl font-semibold text-white">60+</dd>
               </div>
               <div>
                 <dt className="text-xs uppercase tracking-[0.3em]">AI agents involved</dt>
