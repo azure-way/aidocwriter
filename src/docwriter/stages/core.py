@@ -117,11 +117,16 @@ def _build_title_page(plan: Dict[str, Any], metadata: Dict[str, Any]) -> str:
     generated_on = datetime.utcnow().strftime("%Y-%m-%d")
 
     lines: List[str] = ["<!-- TITLE_PAGE_START -->", f"# {title}", ""]
+    lines.append("")  # spacer
+    footer: List[str] = []
     if audience:
-        lines.append(f"**Audience:** {audience}")
+        footer.append(f"**Audience:** {audience}")
     if job_id:
-        lines.append(f"**Job ID:** {job_id}")
-    lines.append(f"**Generated:** {generated_on}")
+        footer.append(f"**Job ID:** {job_id}")
+    footer.append(f"**Generated:** {generated_on}")
+    if footer:
+        lines.append("")
+        lines.extend(footer)
     lines.extend(["", "<div style=\"page-break-after: always;\"></div>", "<!-- TITLE_PAGE_END -->", ""])
     return "\n".join(lines)
 

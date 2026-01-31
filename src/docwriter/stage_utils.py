@@ -151,6 +151,8 @@ def number_markdown_headings(markdown: str) -> str:
 
         numbering_parts = [str(counters[idx]) for idx in range(level) if counters[idx] > 0]
         numbering = ".".join(numbering_parts)
+        if level == 1 and numbering:
+            numbering = f"{numbering}."
         if numbering:
             numbered_line = f"{hashes} {numbering} {text}".rstrip()
         else:
