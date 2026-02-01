@@ -508,13 +508,17 @@ def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) 
     with stage_timer(job_id=data["job_id"], stage="REVIEW", cycle=cycle_idx, user_id=job_paths.user_id) as timing:
         store = BlobStore()
         draft = store.get_text(blob=data["out"])
-        review_json = reviewer.review(plan=data["plan"], draft_markdown=draft)
-        style_agent = StyleReviewerAgent()
-        style = style_agent.review_style(plan=data["plan"], markdown=draft)
-        cohesion_agent = CohesionReviewerAgent()
-        cohesion = cohesion_agent.review_cohesion(plan=data["plan"], markdown=draft)
-        summary_agent = SummaryReviewerAgent()
-        summary = summary_agent.review_executive_summary(plan=data["plan"], markdown=draft)
+        try:
+            review_json = reviewer.review(plan=data["plan"], draft_markdown=draft)
+            style_agent = StyleReviewerAgent()
+            cohesion_agent = CohesionReviewerAgent()
+            summary_agent = SummaryReviewerAgent()
+            style = style_agent.review_style(plan=data["plan"], markdown=draft)
+            cohesion = cohesion_agent.review_cohesion(plan=data["plan"], markdown=draft)
+            summary = summary_agent.review_executive_summary(plan=data["plan"], markdown=draft)
+        except Exception as exc:
+            track_exception(exc, {"job_id": data["job_id"], "stage": "REVIEW"})
+            raise
     payload = {**data, "review_json": review_json, "style_json": style, "cohesion_json": cohesion, "exec_summary_json": summary}
     try:
         store = BlobStore()
@@ -574,9 +578,13 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
         except Exception:
             pass
         placeholder_sections = find_placeholder_sections(draft)
-        verification_json = verifier.verify(
-            dependency_summaries=data.get("dependency_summaries", {}), final_markdown=draft
-        )
+        try:
+            verification_json = verifier.verify(
+                dependency_summaries=data.get("dependency_summaries", {}), final_markdown=draft
+            )
+        except Exception as exc:
+            track_exception(exc, {"job_id": data["job_id"], "stage": "VERIFY"})
+            raise
     payload = {**data, "verification_json": verification_json}
     cycle_state = ensure_cycle_state(payload)
     try:
@@ -700,16 +708,20 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
                     dep_context = "\n".join(
                         [dependency_summaries.get(str(d), "") for d in deps if dependency_summaries.get(str(d))]
                     )
-                    new_text = "".join(
-                        list(
-                            writer.write_section(
-                                plan=plan,
-                                section=section,
-                                dependency_context=dep_context,
-                                extra_guidance=combined_guidance,
+                    try:
+                        new_text = "".join(
+                            list(
+                                writer.write_section(
+                                    plan=plan,
+                                    section=section,
+                                    dependency_context=dep_context,
+                                    extra_guidance=combined_guidance,
+                                )
                             )
                         )
-                    )
+                    except Exception as exc:
+                        track_exception(exc, {"job_id": job_paths.job_id, "stage": "REWRITE", "section": sid})
+                        raise
                     start_marker = f"<!-- SECTION:{sid}:START -->"
                     end_marker = f"<!-- SECTION:{sid}:END -->"
                     start_idx = text.find(start_marker)
@@ -779,10 +791,12 @@ def process_finalize(data: Dict[str, Any]) -> None:
             if docx_bytes:
                 try:
                     store.put_bytes(blob=job_paths.final("docx"), data_bytes=docx_bytes)
-                except Exception:
+                except Exception as exc:
                     logging.exception("Failed to upload DOCX export for job %s", job_paths.job_id)
-        except Exception:
+                    track_exception(exc, {"job_id": job_paths.job_id, "stage": "FINALIZE", "artifact": "docx"})
+        except Exception as exc:
             logging.exception("Failed to finalize job %s", data.get("job_id"))
+            track_exception(exc, {"job_id": job_paths.job_id, "stage": "FINALIZE"})
     final_tokens = 0
     publish_status(
         _stage_completed_event(

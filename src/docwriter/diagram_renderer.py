@@ -8,6 +8,7 @@ from .config import get_settings
 from .llm import LLMClient, LLMMessage
 from .messaging import publish_stage_event, send_queue_message
 from .storage import BlobStore, JobStoragePaths
+from .telemetry import track_exception
 
 
 class DiagramRenderError(RuntimeError):
@@ -146,6 +147,8 @@ def _render_with_plantuml(source: str | bytes, fmt: str) -> bytes:
             return response.content
         except Exception as exc:  # pragma: no cover - defensive
             last_exc = exc
+            track_exception(exc, {"stage": "DIAGRAM_RENDER", "attempt": str(attempt + 1)})
+    track_exception(last_exc or Exception("PlantUML unknown failure"), {"stage": "DIAGRAM_RENDER"})
     raise DiagramRenderError(f"PlantUML rendering failed after 3 attempts: {last_exc}") from last_exc
 
 
@@ -220,6 +223,7 @@ def process_diagram_render(data: Dict[str, Any]) -> None:
             publish_stage_event("DIAGRAM", "DONE", payload, extra={"message": complete_message})
             publish_stage_event("FINALIZE", "QUEUED", payload)
         except DiagramRenderError as exc:
+            track_exception(exc, {"job_id": job_id, "stage": "DIAGRAM_RENDER"})
             publish_stage_event(
                 "DIAGRAM",
                 "FAILED",
@@ -228,6 +232,7 @@ def process_diagram_render(data: Dict[str, Any]) -> None:
             )
             raise
         except Exception as exc:  # pragma: no cover - defensive
+            track_exception(exc, {"job_id": job_id, "stage": "DIAGRAM_RENDER"})
             publish_stage_event(
                 "DIAGRAM",
                 "FAILED",
@@ -262,4 +267,5 @@ def process_diagram_render(data: Dict[str, Any]) -> None:
         blob_path = data.get("blob_path") or job_paths.images(f"{diagram_id}.{fmt}")
         (store or BlobStore()).put_bytes(blob=blob_path, data_bytes=content)
     except Exception as exc:  # pragma: no cover - defensive
+        track_exception(exc, {"job_id": job_id, "stage": "DIAGRAM_RENDER"})
         raise DiagramRenderError(f"unexpected rendering error: {exc}") from exc
