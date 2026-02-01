@@ -70,6 +70,7 @@ class Settings:
     sb_topic_status: str = os.getenv("DOCWRITER_DEFAULT_STATUS_TOPIC", "aidocwriter-status")
     sb_status_subscription: str = "console"
     sb_lock_renew_s: float = 900.0
+    write_batch_size: int = 5
 
     # Behavior
     request_timeout_s: int = 120
@@ -117,6 +118,7 @@ class Settings:
             sb_topic_status=env.get("SERVICE_BUS_TOPIC_STATUS", cls.sb_topic_status),
             sb_status_subscription=env.get("SERVICE_BUS_STATUS_SUBSCRIPTION", cls.sb_status_subscription),
             sb_lock_renew_s=_coerce_float(env.get("SERVICE_BUS_LOCK_RENEW_S"), cls.sb_lock_renew_s),
+            write_batch_size=_coerce_int(env.get("DOCWRITER_WRITE_BATCH_SIZE"), cls.write_batch_size),
             request_timeout_s=_coerce_int(env.get("DOCWRITER_REQUEST_TIMEOUT_S"), cls.request_timeout_s),
             max_section_tokens=_coerce_int(env.get("DOCWRITER_MAX_SECTION_TOKENS"), cls.max_section_tokens),
             streaming=_coerce_bool(env.get("DOCWRITER_STREAM"), cls.streaming),

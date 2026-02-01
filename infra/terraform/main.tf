@@ -250,6 +250,7 @@ module "app" {
     AZURE_BLOB_CONTAINER              = "docwriter"
     DOCWRITER_STATUS_TABLE            = "DocWriterStatus"
     DOCWRITER_PLANTUML_REFORMAT_MODEL = "gpt-5.2"
+    DOCWRITER_WRITE_BATCH_SIZE        = "2"
   }
   api_secrets = [
     {

@@ -25,6 +25,7 @@ from docwriter.stage_utils import (
     merge_revised_markdown,
     number_markdown_headings,
     parse_review_guidance,
+    TITLE_PAGE_END,
 )
 from docwriter.storage import BlobStore, JobStoragePaths
 from docwriter.summary import Summarizer
@@ -445,6 +446,8 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
         blob_path = BlobStore().allocate_document_blob(job_paths.job_id, job_paths.user_id)
 
     write_tokens_total = 0
+    written_sections_raw = data.get("written_sections") or []
+    written_sections = {str(s) for s in written_sections_raw if s is not None}
     with stage_timer(job_id=data["job_id"], stage="WRITE", user_id=job_paths.user_id) as timing:
         plan = data["plan"]
         outline = plan.get("outline", [])
@@ -453,8 +456,28 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
         id_to_section = {str(s.get("id")): s for s in outline}
         dependency_summaries = data.get("dependency_summaries", {})
         renew_lock = data.get("_renew_lock")
-        document_text_parts: list[str] = []
-        for idx, sid in enumerate(order, start=1):
+        last_lock_renew = time.perf_counter()
+        # pick up any existing draft body to keep building across batches
+        existing_title_page = ""
+        existing_body = ""
+        try:
+            store = BlobStore()
+            existing_text = store.get_text(blob=blob_path)
+            if TITLE_PAGE_END in existing_text:
+                title_part, rest = existing_text.split(TITLE_PAGE_END, 1)
+                existing_title_page = f"{title_part}{TITLE_PAGE_END}"
+                existing_body = rest.strip()
+            else:
+                existing_body = existing_text.strip()
+        except Exception:
+            existing_title_page = ""
+            existing_body = ""
+
+        document_text_parts: list[str] = [existing_body] if existing_body else []
+        remaining = [sid for sid in order if sid not in written_sections]
+        batch_size = max(1, int(get_settings().write_batch_size or 5))
+        batch = remaining[:batch_size]
+        for idx, sid in enumerate(batch, start=1):
             section = id_to_section[sid]
             deps = section.get("dependencies", []) or []
             dep_context = "\n".join([dependency_summaries.get(str(d), "") for d in deps if dependency_summaries.get(str(d))])
@@ -463,23 +486,43 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
             summary = summarizer.summarize_section("\n\n".join(document_text_parts))
             dependency_summaries[sid] = summary
             write_tokens_total += _usage_total(getattr(writer.llm, "last_usage", None))
-            if renew_lock and idx % 10 == 0:
+            if renew_lock:
                 try:
-                    renew_lock()
+                    now = time.perf_counter()
+                    if now - last_lock_renew > 60:  # renew at least once a minute
+                        renew_lock()
+                        last_lock_renew = now
                 except Exception as exc:
                     track_exception(exc, {"job_id": data["job_id"], "stage": "WRITE", "action": "renew_lock"})
+            written_sections.add(sid)
         body_text = "\n\n".join(document_text_parts)
-        title_page = _build_title_page(plan, data)
-        document_text = f"{title_page}{body_text}" if body_text else title_page
-    payload = {**data, "out": blob_path, "dependency_summaries": dependency_summaries}
+        if existing_title_page:
+            document_text = f"{existing_title_page}\n\n{body_text}".strip()
+        else:
+            title_page = _build_title_page(plan, data)
+            document_text = f"{title_page}{body_text}" if body_text else title_page
+    payload = {
+        **data,
+        "out": blob_path,
+        "dependency_summaries": dependency_summaries,
+        "written_sections": list(written_sections),
+    }
     try:
         store = BlobStore()
         store.put_text(blob=blob_path, text=document_text)
         store.put_text(blob=job_paths.draft(), text=document_text)
     except Exception as exc:
         track_exception(exc, {"job_id": data["job_id"], "stage": "WRITE"})
-    publish_stage_event("REVIEW", "QUEUED", payload)
-    send_queue_message(settings.sb_queue_review, payload)
+    total_sections = len(order)
+    completed_count = len(written_sections)
+    if completed_count < total_sections:
+        message = f"Section {completed_count} written of {total_sections}"
+        publish_stage_event("WRITE", "QUEUED", payload, extra={"message": message})
+        send_queue_message(settings.sb_queue_write, payload)
+    else:
+        payload.pop("written_sections", None)
+        publish_stage_event("REVIEW", "QUEUED", payload)
+        send_queue_message(settings.sb_queue_review, payload)
     if not write_tokens_total:
         write_tokens_total = _estimate_tokens(document_text)
     publish_status(
