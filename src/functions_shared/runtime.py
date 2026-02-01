@@ -43,6 +43,13 @@ def service_bus_handler(
     """Execute a queue processor inside an Azure Function host."""
     worker_utils.configure_logging(worker_name)
     data = _decode_body(message)
+    # Attach renewal callback when available so processors can extend the lock.
+    try:
+        renew_lock = getattr(message, "renew_lock", None)
+        if callable(renew_lock):
+            data["_renew_lock"] = renew_lock
+    except Exception:
+        pass
     try:
         processor(data)
     except Exception:

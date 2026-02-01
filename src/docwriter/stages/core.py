@@ -452,8 +452,9 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
         order = graph.topological_order() if outline else []
         id_to_section = {str(s.get("id")): s for s in outline}
         dependency_summaries = data.get("dependency_summaries", {})
+        renew_lock = data.get("_renew_lock")
         document_text_parts: list[str] = []
-        for sid in order:
+        for idx, sid in enumerate(order, start=1):
             section = id_to_section[sid]
             deps = section.get("dependencies", []) or []
             dep_context = "\n".join([dependency_summaries.get(str(d), "") for d in deps if dependency_summaries.get(str(d))])
@@ -462,6 +463,11 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
             summary = summarizer.summarize_section("\n\n".join(document_text_parts))
             dependency_summaries[sid] = summary
             write_tokens_total += _usage_total(getattr(writer.llm, "last_usage", None))
+            if renew_lock and idx % 10 == 0:
+                try:
+                    renew_lock()
+                except Exception as exc:
+                    track_exception(exc, {"job_id": data["job_id"], "stage": "WRITE", "action": "renew_lock"})
         body_text = "\n\n".join(document_text_parts)
         title_page = _build_title_page(plan, data)
         document_text = f"{title_page}{body_text}" if body_text else title_page
