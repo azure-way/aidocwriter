@@ -519,23 +519,33 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
         message = f"Section {completed_count} written of {total_sections}"
         publish_stage_event("WRITE", "QUEUED", payload, extra={"message": message})
         send_queue_message(settings.sb_queue_write, payload)
+        progress_details = {"written": completed_count, "total": total_sections}
+        status_payload = StatusEvent(
+            job_id=data["job_id"],
+            stage="WRITE_IN_PROGRESS",
+            ts=time.time(),
+            message=message,
+            cycle=None,
+            extra={"details": progress_details},
+        ).to_payload()
+        publish_status(status_payload)
     else:
         payload.pop("written_sections", None)
         publish_stage_event("REVIEW", "QUEUED", payload)
         send_queue_message(settings.sb_queue_review, payload)
-    if not write_tokens_total:
-        write_tokens_total = _estimate_tokens(document_text)
-    publish_status(
-        _stage_completed_event(
-            data["job_id"],
-            "WRITE",
-            timing,
-            artifact=job_paths.draft(),
-            tokens=write_tokens_total,
-            model=settings.writer_model,
-            source=data,
+        if not write_tokens_total:
+            write_tokens_total = _estimate_tokens(document_text)
+        publish_status(
+            _stage_completed_event(
+                data["job_id"],
+                "WRITE",
+                timing,
+                artifact=job_paths.draft(),
+                tokens=write_tokens_total,
+                model=settings.writer_model,
+                source=data,
+            )
         )
-    )
 
 
 def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) -> None:
