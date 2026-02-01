@@ -56,6 +56,21 @@ class ServiceBusManager:
             track_exception(exc, {"queue": queue_name})
             raise
 
+
+    def _status_topics(self) -> List[str]:
+        settings = get_settings()
+        topics: List[str] = []
+        primary = settings.sb_topic_status
+        if primary:
+            topics.append(primary)
+        fallback_env = os.getenv("DOCWRITER_FALLBACK_STATUS_TOPIC")
+        if fallback_env and fallback_env not in topics:
+            topics.append(fallback_env)
+        for default in self._status_defaults:
+            if default not in topics:
+                topics.append(default)
+        return topics
+
     # Status topic -------------------------------------------------------
     def publish_status(self, payload: Union[StatusEvent, Dict[str, Any]]) -> None:
         if isinstance(payload, StatusEvent):
@@ -113,19 +128,6 @@ def publish_stage_event(
     )
     self.publish_status(event_payload.to_payload())
 
-    def _status_topics(self) -> List[str]:
-        settings = get_settings()
-        topics: List[str] = []
-        primary = settings.sb_topic_status
-        if primary:
-            topics.append(primary)
-        fallback_env = os.getenv("DOCWRITER_FALLBACK_STATUS_TOPIC")
-        if fallback_env and fallback_env not in topics:
-            topics.append(fallback_env)
-        for default in self._status_defaults:
-            if default not in topics:
-                topics.append(default)
-        return topics
 
 
 _CYCLIC_STAGES: Set[str] = {"REVIEW", "VERIFY", "REWRITE"}
