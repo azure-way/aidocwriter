@@ -97,36 +97,36 @@ class ServiceBusManager:
             props["job_id"] = str(payload["job_id"])
         track_event("job_status", props)
 
-def publish_stage_event(
-    self,
-    stage: str,
-    event: str,
-    data: Mapping[str, Any],
-    *,
-    extra: Optional[Mapping[str, Any]] = None,
-) -> None:
-    job_id = data.get("job_id")
-    if not job_id:
-        return
-    payload: Dict[str, Any] = {}
-    custom_message: Optional[str] = None
-    if extra:
-        for key, value in extra.items():
-            if key in _ALLOWED_STATUS_EXTRA_KEYS and value is not None:
-                payload[key] = value
-        if "message" in extra and isinstance(extra.get("message"), str):
-            custom_message = str(extra.get("message"))
-    cycle = _current_cycle(data) if stage in _CYCLIC_STAGES else None
-    default_message = _build_default_message(f"{stage}_{event}", cycle)
-    event_payload = StatusEvent(
-        job_id=job_id,
-        stage=f"{stage}_{event}",
-        ts=time.time(),
-        message=custom_message or default_message,
-        cycle=cycle,
-        extra=payload,
-    )
-    self.publish_status(event_payload.to_payload())
+    def publish_stage_event(
+        self,
+        stage: str,
+        event: str,
+        data: Mapping[str, Any],
+        *,
+        extra: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        job_id = data.get("job_id")
+        if not job_id:
+            return
+        payload: Dict[str, Any] = {}
+        custom_message: Optional[str] = None
+        if extra:
+            for key, value in extra.items():
+                if key in _ALLOWED_STATUS_EXTRA_KEYS and value is not None:
+                    payload[key] = value
+            if "message" in extra and isinstance(extra.get("message"), str):
+                custom_message = str(extra.get("message"))
+        cycle = _current_cycle(data) if stage in _CYCLIC_STAGES else None
+        default_message = _build_default_message(f"{stage}_{event}", cycle)
+        event_payload = StatusEvent(
+            job_id=job_id,
+            stage=f"{stage}_{event}",
+            ts=time.time(),
+            message=custom_message or default_message,
+            cycle=cycle,
+            extra=payload,
+        )
+        self.publish_status(event_payload.to_payload())
 
 
 
