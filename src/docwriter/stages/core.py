@@ -446,7 +446,7 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
     if not isinstance(blob_path, str) or not blob_path:
         blob_path = BlobStore().allocate_document_blob(job_paths.job_id, job_paths.user_id)
 
-    write_tokens_total = 0
+    tokens_total = int(data.get("write_tokens_total") or 0)
     written_sections_raw = data.get("written_sections") or []
     written_sections = {str(s) for s in written_sections_raw if s is not None}
     with stage_timer(job_id=data["job_id"], stage="WRITE", user_id=job_paths.user_id) as timing:
@@ -486,7 +486,7 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
             document_text_parts.append(section_output)
             summary = summarizer.summarize_section("\n\n".join(document_text_parts))
             dependency_summaries[sid] = summary
-            write_tokens_total += _usage_total(getattr(writer.llm, "last_usage", None))
+            tokens_total += _usage_total(getattr(writer.llm, "last_usage", None))
             if renew_lock:
                 try:
                     now = time.perf_counter()
@@ -507,6 +507,7 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
         "out": blob_path,
         "dependency_summaries": dependency_summaries,
         "written_sections": list(written_sections),
+        "write_tokens_total": tokens_total,
     }
     try:
         store = BlobStore()
@@ -527,26 +528,25 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
             ts=time.time(),
             message=message,
             cycle=None,
-            extra={"details": progress_details},
+            extra={"details": {**progress_details, "tokens": tokens_total}},
         ).to_payload()
         publish_status(status_payload)
     else:
         payload.pop("written_sections", None)
+        tokens_total = tokens_total or _estimate_tokens(document_text)
         publish_stage_event("REVIEW", "QUEUED", payload)
         send_queue_message(settings.sb_queue_review, payload)
-        if not write_tokens_total:
-            write_tokens_total = _estimate_tokens(document_text)
-        publish_status(
-            _stage_completed_event(
-                data["job_id"],
-                "WRITE",
-                timing,
-                artifact=job_paths.draft(),
-                tokens=write_tokens_total,
-                model=settings.writer_model,
-                source=data,
-            )
+    publish_status(
+        _stage_completed_event(
+            data["job_id"],
+            "WRITE",
+            timing,
+            artifact=job_paths.draft(),
+            tokens=tokens_total,
+            model=settings.writer_model,
+            source=data,
         )
+    )
 
 
 def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) -> None:
