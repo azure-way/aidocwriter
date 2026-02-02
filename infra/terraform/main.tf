@@ -251,6 +251,7 @@ module "app" {
     DOCWRITER_STATUS_TABLE            = "DocWriterStatus"
     DOCWRITER_PLANTUML_REFORMAT_MODEL = "gpt-5.2"
     DOCWRITER_WRITE_BATCH_SIZE        = "2"
+    DOCWRITER_DEFAULT_LENGTH_PAGES    = "30"
   }
   api_secrets = [
     {

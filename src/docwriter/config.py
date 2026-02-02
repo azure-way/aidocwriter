@@ -48,6 +48,7 @@ class Settings:
     writer_model: str = "gpt-5.2"
     writer_api_version: str | None = "2025-04-01-preview"
     writer_use_responses: bool = True
+    default_length_pages: int = 80
 
     # OpenAI
     openai_api_key: str | None = None
@@ -100,6 +101,7 @@ class Settings:
             writer_model=env.get("DOCWRITER_WRITER_MODEL", cls.writer_model),
             writer_api_version=env.get("DOCWRITER_WRITER_API_VERSION", cls.writer_api_version),
             writer_use_responses=_coerce_bool(env.get("DOCWRITER_WRITER_USE_RESPONSES"), cls.writer_use_responses),
+            default_length_pages=_coerce_int(env.get("DOCWRITER_DEFAULT_LENGTH_PAGES"), cls.default_length_pages),
             openai_api_key=env.get("OPENAI_API_KEY"),
             openai_base_url=env.get("OPENAI_BASE_URL"),
             openai_api_version=env.get("OPENAI_API_VERSION"),

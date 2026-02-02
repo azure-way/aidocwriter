@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import re
 from datetime import datetime
 from typing import Any, Dict, Optional, Mapping, List
 
@@ -363,7 +364,7 @@ def process_plan(data: Dict[str, Any], planner: PlannerAgent | None = None) -> N
     with stage_timer(job_id=data["job_id"], stage="PLAN", user_id=job_paths.user_id) as timing:
         audience = data.get("audience")
         title = data.get("title")
-        length_pages = 80
+        length_pages = get_settings().default_length_pages
 
         answers: Dict[str, Any] = {}
         if store:
@@ -401,7 +402,7 @@ def process_plan(data: Dict[str, Any], planner: PlannerAgent | None = None) -> N
         "plan": {
             "title": plan.title,
             "audience": plan.audience,
-            "length_pages": max(60, plan.length_pages or 80),
+            "length_pages": max(60, plan.length_pages or get_settings().default_length_pages),
             "outline": plan.outline,
             "glossary": plan.glossary,
             "global_style": plan.global_style,
