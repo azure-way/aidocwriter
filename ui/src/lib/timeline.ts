@@ -66,7 +66,7 @@ export const cycleStatusStyles: Record<StagePhase, { badge: string; container: s
 };
 
 export const normalizeStageName = (value: string): string => {
-  const base = value.replace(/_(DONE|START|QUEUED|FAILED|ERROR)$/u, "");
+  const base = value.replace(/_(DONE|START|QUEUED|FAILED|ERROR|IN_PROGRESS)$/u, "");
   if (base === "INTAKE_RESUMED") {
     return "INTAKE_RESUME";
   }

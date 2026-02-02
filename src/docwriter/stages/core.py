@@ -564,53 +564,113 @@ def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) 
         send_queue_message(settings.sb_queue_diagram_prep, data)
         return
     cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
-    publish_stage_event("REVIEW", "START", data)
+    progress = data.get("review_progress") or {
+        "review_agent": False,
+        "style_agent": False,
+        "cohesion_agent": False,
+        "summary_agent": False,
+        "tokens_total": 0,
+    }
+    # determine next agent to run
+    agent_order = [
+        ("review_agent", "general"),
+        ("style_agent", "style"),
+        ("cohesion_agent", "cohesion"),
+        ("summary_agent", "summary"),
+    ]
+    next_agent = None
+    for key, label in agent_order:
+        if not progress.get(key):
+            next_agent = (key, label)
+            break
+
+    if next_agent is None:
+        # all agents done; proceed to finalize review stage
+        artifact_path = job_paths.cycle(cycle_idx, "review.json")
+        review_tokens = int(progress.get("tokens_total") or 0)
+        timing = StageTiming(job_id=data["job_id"], stage="REVIEW", cycle=cycle_idx, start=time.perf_counter(), duration_s=0.0)
+        publish_stage_event("VERIFY", "QUEUED", data)
+        send_queue_message(settings.sb_queue_verify, data)
+        publish_status(
+            _stage_completed_event(
+                data["job_id"],
+                "REVIEW",
+                timing,
+                artifact=artifact_path,
+                tokens=review_tokens,
+                model=settings.reviewer_model,
+                source=data,
+            )
+        )
+        return
+
+    agent_key, agent_label = next_agent
+    publish_stage_event("REVIEW", "START", data, extra={"message": f"Running {agent_label} reviewer"})
     with stage_timer(job_id=data["job_id"], stage="REVIEW", cycle=cycle_idx, user_id=job_paths.user_id) as timing:
         store = BlobStore()
         draft = store.get_text(blob=data["out"])
         try:
-            review_json = reviewer.review(plan=data["plan"], draft_markdown=draft)
-            style_agent = StyleReviewerAgent()
-            cohesion_agent = CohesionReviewerAgent()
-            summary_agent = SummaryReviewerAgent()
-            style = style_agent.review_style(plan=data["plan"], markdown=draft)
-            cohesion = cohesion_agent.review_cohesion(plan=data["plan"], markdown=draft)
-            summary = summary_agent.review_executive_summary(plan=data["plan"], markdown=draft)
+            if agent_key == "review_agent":
+                review_json = reviewer.review(plan=data["plan"], draft_markdown=draft)
+                data["review_json"] = review_json
+                store.put_text(blob=job_paths.cycle(cycle_idx, "review.json"), text=review_json)
+                progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(reviewer.llm, "last_usage", None))
+            elif agent_key == "style_agent":
+                style_agent = StyleReviewerAgent()
+                style = style_agent.review_style(plan=data["plan"], markdown=draft)
+                data["style_json"] = style
+                store.put_text(blob=job_paths.cycle(cycle_idx, "style.json"), text=style)
+                progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(style_agent.llm, "last_usage", None))
+            elif agent_key == "cohesion_agent":
+                cohesion_agent = CohesionReviewerAgent()
+                cohesion = cohesion_agent.review_cohesion(plan=data["plan"], markdown=draft)
+                data["cohesion_json"] = cohesion
+                store.put_text(blob=job_paths.cycle(cycle_idx, "cohesion.json"), text=cohesion)
+                progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(cohesion_agent.llm, "last_usage", None))
+            elif agent_key == "summary_agent":
+                summary_agent = SummaryReviewerAgent()
+                summary = summary_agent.review_executive_summary(plan=data["plan"], markdown=draft)
+                data["exec_summary_json"] = summary
+                store.put_text(blob=job_paths.cycle(cycle_idx, "executive_summary.json"), text=summary)
+                progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(summary_agent.llm, "last_usage", None))
+            progress[agent_key] = True
         except Exception as exc:
-            track_exception(exc, {"job_id": data["job_id"], "stage": "REVIEW"})
+            track_exception(exc, {"job_id": data["job_id"], "stage": "REVIEW", "agent": agent_label})
             raise
-    payload = {**data, "review_json": review_json, "style_json": style, "cohesion_json": cohesion, "exec_summary_json": summary}
-    try:
-        store = BlobStore()
-        store.put_text(blob=job_paths.cycle(cycle_idx, "review.json"), text=review_json)
-        store.put_text(blob=job_paths.cycle(cycle_idx, "style.json"), text=style)
-        store.put_text(blob=job_paths.cycle(cycle_idx, "cohesion.json"), text=cohesion)
-        store.put_text(blob=job_paths.cycle(cycle_idx, "executive_summary.json"), text=summary)
-    except Exception as exc:
-        track_exception(exc, {"job_id": data["job_id"], "stage": "REVIEW"})
-    publish_stage_event("VERIFY", "QUEUED", payload)
-    send_queue_message(settings.sb_queue_verify, payload)
-    review_tokens = _usage_total(getattr(reviewer.llm, "last_usage", None))
-    review_tokens += _usage_total(getattr(style_agent.llm, "last_usage", None))
-    review_tokens += _usage_total(getattr(cohesion_agent.llm, "last_usage", None))
-    review_tokens += _usage_total(getattr(summary_agent.llm, "last_usage", None))
-    if not review_tokens:
-        review_tokens = sum(
-            _estimate_tokens(text)
-            for text in (review_json, style, cohesion, summary)
-            if isinstance(text, str)
+
+    # requeue for next agent if any remain
+    data["review_progress"] = progress
+    remaining = [key for key, _ in agent_order if not progress.get(key)]
+    if remaining:
+        message = f"Review progress: {agent_label} done; remaining {len(remaining)} agent(s)"
+        publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
+        send_queue_message(settings.sb_queue_review, data)
+        status_payload = StatusEvent(
+            job_id=data["job_id"],
+            stage="REVIEW_IN_PROGRESS",
+            ts=time.time(),
+            message=message,
+            cycle=cycle_idx,
+            extra={"details": {"completed_agents": [k for k, _ in agent_order if progress.get(k)], "remaining": remaining}},
+        ).to_payload()
+        publish_status(status_payload)
+    else:
+        # all agents done in this pass
+        artifact_path = job_paths.cycle(cycle_idx, "review.json")
+        review_tokens = int(progress.get("tokens_total") or 0)
+        publish_stage_event("VERIFY", "QUEUED", data)
+        send_queue_message(settings.sb_queue_verify, data)
+        publish_status(
+            _stage_completed_event(
+                data["job_id"],
+                "REVIEW",
+                StageTiming(job_id=data["job_id"], stage="REVIEW", cycle=cycle_idx, start=time.perf_counter(), duration_s=0.0),
+                artifact=artifact_path,
+                tokens=review_tokens,
+                model=settings.reviewer_model,
+                source=data,
+            )
         )
-    publish_status(
-        _stage_completed_event(
-            data["job_id"],
-            "REVIEW",
-            timing,
-            artifact=job_paths.cycle(cycle_idx, "review.json"),
-            tokens=review_tokens,
-            model=settings.reviewer_model,
-            source=data,
-        )
-    )
 
 
 def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) -> None:
@@ -730,6 +790,7 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
     job_paths = _job_paths(data)
     rewrite_tokens_total = 0
     requires_rewrite = bool(data.get("requires_rewrite"))
+    rewritten_sections = {str(s) for s in (data.get("rewritten_sections") or []) if s is not None}
     cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
     publish_stage_event("REWRITE", "START", data)
     with stage_timer(job_id=data["job_id"], stage="REWRITE", cycle=cycle_idx, user_id=job_paths.user_id) as timing:
@@ -759,8 +820,12 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
             placeholder_sections = {str(s) for s in data.get("placeholder_sections", [])}
             affected.update(placeholder_sections)
 
-            if affected:
-                for sid in affected:
+            remaining = [sid for sid in affected if sid not in rewritten_sections]
+            batch_size = max(1, int(settings.write_batch_size or 5))
+            batch = remaining[:batch_size]
+
+            if batch:
+                for sid in batch:
                     section = id_to_section.get(sid)
                     if not section:
                         continue
@@ -790,14 +855,39 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
                         end_idx += len(end_marker)
                         text = text[:start_idx] + new_text + text[end_idx:]
                     rewrite_tokens_total += _usage_total(getattr(writer.llm, "last_usage", None))
+                    rewritten_sections.add(sid)
                 store.put_text(blob=data["out"], text=text)
                 try:
                     store.put_text(blob=job_paths.cycle(cycle_idx, "rewrite.md"), text=text)
                 except Exception:
                     pass
+            remaining_after_batch = [sid for sid in affected if sid not in rewritten_sections]
+            if remaining_after_batch:
+                progress_msg = f"Rewrite sections: {len(rewritten_sections)} done of {len(affected)}"
+                progress_payload = {
+                    **data,
+                    "out": data["out"],
+                    "requires_rewrite": True,
+                    "rewritten_sections": list(rewritten_sections),
+                    "dependency_summaries": data.get("dependency_summaries", {}),
+                    "placeholder_sections": list(placeholder_sections),
+                }
+                publish_stage_event("REWRITE", "QUEUED", progress_payload, extra={"message": progress_msg})
+                send_queue_message(settings.sb_queue_rewrite, progress_payload)
+                status_payload = StatusEvent(
+                    job_id=data["job_id"],
+                    stage="REWRITE_IN_PROGRESS",
+                    ts=time.time(),
+                    message=progress_msg,
+                    cycle=cycle_idx,
+                    extra={"details": {"written": len(rewritten_sections), "total": len(affected)}},
+                ).to_payload()
+                publish_status(status_payload)
+                return
     payload = {
         **data,
         "placeholder_sections": [],
+        "rewritten_sections": list(rewritten_sections),
     }
     next_completed = min(cycle_state.requested, cycle_state.completed + 1)
     next_cycle_state = CycleState(cycle_state.requested, next_completed)
