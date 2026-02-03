@@ -970,6 +970,18 @@ def process_review_summary(data: Dict[str, Any], summary_agent: SummaryReviewerA
     progress = _load_review_progress(job_paths, cycle_idx)
     if progress["summary"].get("done"):
         publish_stage_event("VERIFY", "QUEUED", data, extra={"message": "Summary review already complete; forwarding to verify"})
+        review_tokens = int(progress.get("tokens_total") or 0)
+        publish_status(
+            _stage_completed_event(
+                data["job_id"],
+                "REVIEW",
+                StageTiming(job_id=data["job_id"], stage="REVIEW", cycle=cycle_idx, start=time.perf_counter(), duration_s=0.0),
+                artifact=job_paths.cycle(cycle_idx, "review.json"),
+                tokens=review_tokens,
+                model=settings.reviewer_model,
+                source=data,
+            )
+        )
         send_queue_message(settings.sb_queue_verify, _strip_review_payload(data))
         return
 

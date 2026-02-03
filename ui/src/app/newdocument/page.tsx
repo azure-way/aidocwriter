@@ -505,6 +505,12 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
         (typeof event.details?.notes === "string" ? event.details.notes : null);
       addEntry("Notes", notesValue);
 
+      const messageValue =
+        (typeof event.message === "string" && event.message.trim()) ||
+        (typeof parsed?.message === "string" && parsed.message.trim()) ||
+        null;
+      addEntry("Message", messageValue);
+
       return entries;
     },
     [extractParsedMessage, formatDuration, formatStage, getTokensFromEvent]
