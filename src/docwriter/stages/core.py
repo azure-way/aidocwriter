@@ -121,6 +121,34 @@ def _compose_section_batch(
     return batch_ids, batch_text
 
 
+def _review_progress_path(job_paths: JobStoragePaths, cycle_idx: int) -> str:
+    return job_paths.cycle(cycle_idx, "review_progress.json")
+
+
+def _load_review_progress(job_paths: JobStoragePaths, cycle_idx: int) -> Dict[str, Any]:
+    progress = _init_review_progress(None)
+    try:
+        store = BlobStore()
+        text = store.get_text(blob=_review_progress_path(job_paths, cycle_idx))
+        loaded = json.loads(text)
+        progress = _init_review_progress(loaded)
+    except Exception:
+        pass
+    return progress
+
+
+def _persist_review_progress(job_paths: JobStoragePaths, cycle_idx: int, progress: Dict[str, Any]) -> None:
+    try:
+        store = BlobStore()
+        store.put_text(blob=_review_progress_path(job_paths, cycle_idx), text=json.dumps(progress, ensure_ascii=False))
+    except Exception as exc:
+        track_exception(exc, {"job_id": job_paths.job_id, "stage": "REVIEW", "action": "persist_progress"})
+
+
+def _strip_review_payload(data: Mapping[str, Any]) -> Dict[str, Any]:
+    return {k: v for k, v in data.items() if k not in {"review_progress", "review_json", "style_json", "cohesion_json", "exec_summary_json"}}
+
+
 def _apply_diagram_results(text: str, results: List[Dict[str, Any]], job_paths: JobStoragePaths) -> str:
     if not results:
         return text
@@ -592,7 +620,7 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
         payload.pop("written_sections", None)
         tokens_total = tokens_total or _estimate_tokens(document_text)
         publish_stage_event("REVIEW", "QUEUED", payload)
-        send_queue_message(settings.sb_queue_review_general, payload)
+        send_queue_message(settings.sb_queue_review_general, _strip_review_payload(payload))
         publish_status(
             _stage_completed_event(
                 data["job_id"],
@@ -627,10 +655,10 @@ def process_review_general(data: Dict[str, Any], reviewer: ReviewerAgent | None 
     if not _ensure_not_exhausted(cycle_state, data, settings):
         return
     cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
-    progress = _init_review_progress(data.get("review_progress"))
+    progress = _load_review_progress(job_paths, cycle_idx)
     if progress["general"].get("done"):
         publish_stage_event("REVIEW", "QUEUED", data, extra={"message": "General review already complete; forwarding to style"})
-        send_queue_message(settings.sb_queue_review_style, {**data, "review_progress": progress})
+        send_queue_message(settings.sb_queue_review_style, _strip_review_payload(data))
         return
 
     publish_stage_event("REVIEW", "START", data, extra={"message": "Running general reviewer"})
@@ -680,10 +708,10 @@ def process_review_general(data: Dict[str, Any], reviewer: ReviewerAgent | None 
             progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(reviewer.llm, "last_usage", None))
             remaining_after_batch = [sid for sid in ordered_section_ids if sid not in reviewed_sections]
             if remaining_after_batch:
-                data["review_progress"] = progress
                 message = f"General review: {len(reviewed_sections)} of {len(ordered_section_ids)} sections (current {current_sid})"
                 publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
-                send_queue_message(settings.sb_queue_review_general, data)
+                _persist_review_progress(job_paths, cycle_idx, progress)
+                send_queue_message(settings.sb_queue_review_general, _strip_review_payload(data))
                 status_payload = StatusEvent(
                     job_id=data["job_id"],
                     stage="REVIEW_IN_PROGRESS",
@@ -701,14 +729,12 @@ def process_review_general(data: Dict[str, Any], reviewer: ReviewerAgent | None 
                 publish_status(status_payload)
                 return
             final_review_json = json.dumps(progress["general"]["accumulated"], ensure_ascii=False)
-            data["review_json"] = final_review_json
             store.put_text(blob=job_paths.cycle(cycle_idx, "review.json"), text=final_review_json)
             progress["general"]["done"] = True
-
-    data["review_progress"] = progress
+    _persist_review_progress(job_paths, cycle_idx, progress)
     message = "General review complete; queuing style reviewer"
     publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
-    send_queue_message(settings.sb_queue_review_style, data)
+    send_queue_message(settings.sb_queue_review_style, _strip_review_payload(data))
     status_payload = StatusEvent(
         job_id=data["job_id"],
         stage="REVIEW_IN_PROGRESS",
@@ -759,10 +785,10 @@ def process_review_style(data: Dict[str, Any], style_agent: StyleReviewerAgent |
     if not _ensure_not_exhausted(cycle_state, data, settings):
         return
     cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
-    progress = _init_review_progress(data.get("review_progress"))
+    progress = _load_review_progress(job_paths, cycle_idx)
     if progress["style"].get("done"):
         publish_stage_event("REVIEW", "QUEUED", data, extra={"message": "Style review already complete; forwarding to cohesion"})
-        send_queue_message(settings.sb_queue_review_cohesion, {**data, "review_progress": progress})
+        send_queue_message(settings.sb_queue_review_cohesion, _strip_review_payload(data))
         return
 
     publish_stage_event("REVIEW", "START", data, extra={"message": "Running style reviewer"})
@@ -804,10 +830,10 @@ def process_review_style(data: Dict[str, Any], style_agent: StyleReviewerAgent |
             progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(style_agent.llm, "last_usage", None))
             remaining_after_batch = [sid for sid in ordered_section_ids if sid not in set(progress["style"].get("sections_done", []))]
             if remaining_after_batch:
-                data["review_progress"] = progress
                 message = f"Style review: {len(progress['style']['sections_done'])} of {len(ordered_section_ids)} sections (current {current_sid})"
                 publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
-                send_queue_message(settings.sb_queue_review_style, data)
+                _persist_review_progress(job_paths, cycle_idx, progress)
+                send_queue_message(settings.sb_queue_review_style, _strip_review_payload(data))
                 status_payload = StatusEvent(
                     job_id=data["job_id"],
                     stage="REVIEW_IN_PROGRESS",
@@ -825,14 +851,13 @@ def process_review_style(data: Dict[str, Any], style_agent: StyleReviewerAgent |
                 publish_status(status_payload)
                 return
             final_style_json = json.dumps(progress["style"]["accumulated"], ensure_ascii=False)
-            data["style_json"] = final_style_json
             store.put_text(blob=job_paths.cycle(cycle_idx, "style.json"), text=final_style_json)
             progress["style"]["done"] = True
 
-    data["review_progress"] = progress
+    _persist_review_progress(job_paths, cycle_idx, progress)
     message = "Style review complete; queuing cohesion reviewer"
     publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
-    send_queue_message(settings.sb_queue_review_cohesion, data)
+    send_queue_message(settings.sb_queue_review_cohesion, _strip_review_payload(data))
     status_payload = StatusEvent(
         job_id=data["job_id"],
         stage="REVIEW_IN_PROGRESS",
@@ -852,10 +877,10 @@ def process_review_cohesion(data: Dict[str, Any], cohesion_agent: CohesionReview
     if not _ensure_not_exhausted(cycle_state, data, settings):
         return
     cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
-    progress = _init_review_progress(data.get("review_progress"))
+    progress = _load_review_progress(job_paths, cycle_idx)
     if progress["cohesion"].get("done"):
         publish_stage_event("REVIEW", "QUEUED", data, extra={"message": "Cohesion review already complete; forwarding to summary"})
-        send_queue_message(settings.sb_queue_review_summary, {**data, "review_progress": progress})
+        send_queue_message(settings.sb_queue_review_summary, _strip_review_payload(data))
         return
 
     publish_stage_event("REVIEW", "START", data, extra={"message": "Running cohesion reviewer"})
@@ -895,10 +920,10 @@ def process_review_cohesion(data: Dict[str, Any], cohesion_agent: CohesionReview
             progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(cohesion_agent.llm, "last_usage", None))
             remaining_after_batch = [sid for sid in ordered_section_ids if sid not in set(progress["cohesion"].get("sections_done", []))]
             if remaining_after_batch:
-                data["review_progress"] = progress
                 message = f"Cohesion review: {len(progress['cohesion']['sections_done'])} of {len(ordered_section_ids)} sections (current {current_sid})"
                 publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
-                send_queue_message(settings.sb_queue_review_cohesion, data)
+                _persist_review_progress(job_paths, cycle_idx, progress)
+                send_queue_message(settings.sb_queue_review_cohesion, _strip_review_payload(data))
                 status_payload = StatusEvent(
                     job_id=data["job_id"],
                     stage="REVIEW_IN_PROGRESS",
@@ -916,14 +941,13 @@ def process_review_cohesion(data: Dict[str, Any], cohesion_agent: CohesionReview
                 publish_status(status_payload)
                 return
             final_cohesion_json = json.dumps(progress["cohesion"]["accumulated"], ensure_ascii=False)
-            data["cohesion_json"] = final_cohesion_json
             store.put_text(blob=job_paths.cycle(cycle_idx, "cohesion.json"), text=final_cohesion_json)
             progress["cohesion"]["done"] = True
 
-    data["review_progress"] = progress
+    _persist_review_progress(job_paths, cycle_idx, progress)
     message = "Cohesion review complete; queuing summary reviewer"
     publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
-    send_queue_message(settings.sb_queue_review_summary, data)
+    send_queue_message(settings.sb_queue_review_summary, _strip_review_payload(data))
     status_payload = StatusEvent(
         job_id=data["job_id"],
         stage="REVIEW_IN_PROGRESS",
@@ -943,10 +967,10 @@ def process_review_summary(data: Dict[str, Any], summary_agent: SummaryReviewerA
     if not _ensure_not_exhausted(cycle_state, data, settings):
         return
     cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
-    progress = _init_review_progress(data.get("review_progress"))
+    progress = _load_review_progress(job_paths, cycle_idx)
     if progress["summary"].get("done"):
         publish_stage_event("VERIFY", "QUEUED", data, extra={"message": "Summary review already complete; forwarding to verify"})
-        send_queue_message(settings.sb_queue_verify, {**data, "review_progress": progress})
+        send_queue_message(settings.sb_queue_verify, _strip_review_payload(data))
         return
 
     publish_stage_event("REVIEW", "START", data, extra={"message": "Running executive summary reviewer"})
@@ -988,10 +1012,10 @@ def process_review_summary(data: Dict[str, Any], summary_agent: SummaryReviewerA
             progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(summary_agent.llm, "last_usage", None))
             remaining_after_batch = [sid for sid in ordered_section_ids if sid not in set(progress["summary"].get("sections_done", []))]
             if remaining_after_batch:
-                data["review_progress"] = progress
                 message = f"Summary review: {len(progress['summary']['sections_done'])} of {len(ordered_section_ids)} sections (current {current_sid})"
                 publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
-                send_queue_message(settings.sb_queue_review_summary, data)
+                _persist_review_progress(job_paths, cycle_idx, progress)
+                send_queue_message(settings.sb_queue_review_summary, _strip_review_payload(data))
                 status_payload = StatusEvent(
                     job_id=data["job_id"],
                     stage="REVIEW_IN_PROGRESS",
@@ -1025,14 +1049,13 @@ def process_review_summary(data: Dict[str, Any], summary_agent: SummaryReviewerA
                 },
                 ensure_ascii=False,
             )
-            data["exec_summary_json"] = final_summary_json
             store.put_text(blob=job_paths.cycle(cycle_idx, "executive_summary.json"), text=final_summary_json)
             progress["summary"]["done"] = True
 
-    data["review_progress"] = progress
+    _persist_review_progress(job_paths, cycle_idx, progress)
     review_tokens = int(progress.get("tokens_total") or 0)
     publish_stage_event("VERIFY", "QUEUED", data, extra={"message": "Summary review complete; queuing verify"})
-    send_queue_message(settings.sb_queue_verify, data)
+    send_queue_message(settings.sb_queue_verify, _strip_review_payload(data))
     publish_status(
         _stage_completed_event(
             data["job_id"],
@@ -1062,7 +1085,11 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
         store = BlobStore()
         draft = store.get_text(blob=data["out"])
         try:
-            review_data = json.loads(data.get("review_json", "{}"))
+            review_text = store.get_text(blob=job_paths.cycle(cycle_idx, "review.json"))
+        except Exception:
+            review_text = data.get("review_json", "{}")
+        try:
+            review_data = json.loads(review_text or "{}")
             revised = review_data.get("revised_markdown")
             if isinstance(revised, str) and revised.strip():
                 merged = merge_revised_markdown(draft, revised)
@@ -1096,8 +1123,17 @@ def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) 
     except Exception:
         contradictions = []
 
-    style_guidance, style_sections = parse_review_guidance(data.get("style_json"))
-    cohesion_guidance, cohesion_sections = parse_review_guidance(data.get("cohesion_json"))
+    try:
+        style_raw = BlobStore().get_text(blob=job_paths.cycle(cycle_idx, "style.json"))
+    except Exception:
+        style_raw = data.get("style_json")
+    try:
+        cohesion_raw = BlobStore().get_text(blob=job_paths.cycle(cycle_idx, "cohesion.json"))
+    except Exception:
+        cohesion_raw = data.get("cohesion_json")
+
+    style_guidance, style_sections = parse_review_guidance(style_raw)
+    cohesion_guidance, cohesion_sections = parse_review_guidance(cohesion_raw)
     needs_rewrite = (
         bool(contradictions)
         or bool(style_guidance)
@@ -1177,15 +1213,28 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
         text = store.get_text(blob=data["out"])
         if requires_rewrite:
             try:
-                verification = json.loads(data.get("verification_json", "{}"))
+                verification_text = BlobStore().get_text(blob=job_paths.cycle(cycle_idx, "contradictions.json"))
+            except Exception:
+                verification_text = data.get("verification_json", "{}")
+            try:
+                verification = json.loads(verification_text or "{}")
             except Exception:
                 verification = {"contradictions": []}
             contradictions = verification.get("contradictions", [])
             id_to_section = {str(s.get("id")): s for s in plan.get("outline", [])}
             dependency_summaries = data.get("dependency_summaries", {})
 
-            style_guidance, style_sections = parse_review_guidance(data.get("style_json"))
-            cohesion_guidance, cohesion_sections = parse_review_guidance(data.get("cohesion_json"))
+            try:
+                style_raw = BlobStore().get_text(blob=job_paths.cycle(cycle_idx, "style.json"))
+            except Exception:
+                style_raw = data.get("style_json")
+            try:
+                cohesion_raw = BlobStore().get_text(blob=job_paths.cycle(cycle_idx, "cohesion.json"))
+            except Exception:
+                cohesion_raw = data.get("cohesion_json")
+
+            style_guidance, style_sections = parse_review_guidance(style_raw)
+            cohesion_guidance, cohesion_sections = parse_review_guidance(cohesion_raw)
             combined_guidance = "\n".join(filter(None, [style_guidance, cohesion_guidance]))
 
             affected = {str(c.get("section_id")) for c in contradictions if c.get("section_id")}
