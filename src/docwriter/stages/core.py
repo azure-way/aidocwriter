@@ -536,17 +536,17 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
         tokens_total = tokens_total or _estimate_tokens(document_text)
         publish_stage_event("REVIEW", "QUEUED", payload)
         send_queue_message(settings.sb_queue_review, payload)
-    publish_status(
-        _stage_completed_event(
-            data["job_id"],
-            "WRITE",
-            timing,
-            artifact=job_paths.draft(),
-            tokens=tokens_total,
-            model=settings.writer_model,
-            source=data,
+        publish_status(
+            _stage_completed_event(
+                data["job_id"],
+                "WRITE",
+                timing,
+                artifact=job_paths.draft(),
+                tokens=tokens_total,
+                model=settings.writer_model,
+                source=data,
+            )
         )
-    )
 
 
 def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) -> None:
