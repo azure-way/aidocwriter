@@ -63,6 +63,10 @@ class Settings:
     sb_queue_intake_resume: str = "docwriter-intake-resume"
     sb_queue_write: str = "docwriter-write"
     sb_queue_review: str = "docwriter-review"
+    sb_queue_review_general: str = "docwriter-review"
+    sb_queue_review_style: str = "docwriter-review-style"
+    sb_queue_review_cohesion: str = "docwriter-review-cohesion"
+    sb_queue_review_summary: str = "docwriter-review-summary"
     sb_queue_verify: str = "docwriter-verify"
     sb_queue_rewrite: str = "docwriter-rewrite"
     sb_queue_diagram_prep: str = "docwriter-diagram-prep"
@@ -112,6 +116,10 @@ class Settings:
             sb_queue_intake_resume=env.get("SERVICE_BUS_QUEUE_INTAKE_RESUME", cls.sb_queue_intake_resume),
             sb_queue_write=env.get("SERVICE_BUS_QUEUE_WRITE", cls.sb_queue_write),
             sb_queue_review=env.get("SERVICE_BUS_QUEUE_REVIEW", cls.sb_queue_review),
+            sb_queue_review_general=env.get("SERVICE_BUS_QUEUE_REVIEW_GENERAL", env.get("SERVICE_BUS_QUEUE_REVIEW", cls.sb_queue_review_general)),
+            sb_queue_review_style=env.get("SERVICE_BUS_QUEUE_REVIEW_STYLE", cls.sb_queue_review_style),
+            sb_queue_review_cohesion=env.get("SERVICE_BUS_QUEUE_REVIEW_COHESION", cls.sb_queue_review_cohesion),
+            sb_queue_review_summary=env.get("SERVICE_BUS_QUEUE_REVIEW_SUMMARY", cls.sb_queue_review_summary),
             sb_queue_verify=env.get("SERVICE_BUS_QUEUE_VERIFY", cls.sb_queue_verify),
             sb_queue_rewrite=env.get("SERVICE_BUS_QUEUE_REWRITE", cls.sb_queue_rewrite),
             sb_queue_diagram_prep=env.get("SERVICE_BUS_QUEUE_DIAGRAM_PREP", cls.sb_queue_diagram_prep),

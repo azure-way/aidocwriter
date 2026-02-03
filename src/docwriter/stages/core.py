@@ -16,7 +16,7 @@ from docwriter.agents.summary_reviewer import SummaryReviewerAgent
 from docwriter.agents.verifier import VerifierAgent
 from docwriter.agents.writer import WriterAgent
 from docwriter.artifacts import export_docx, export_pdf
-from docwriter.config import get_settings
+from docwriter.config import get_settings, Settings
 from docwriter.graph import build_dependency_graph
 from docwriter.messaging import publish_stage_event, publish_status, send_queue_message
 from docwriter.models import StatusEvent
@@ -63,6 +63,62 @@ def _estimate_tokens(text: str) -> int:
         return len(encoding.encode(text))
     except Exception:
         return max(1, len(text) // 3)
+
+
+def _init_review_progress(raw: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    """Normalize review_progress into the new per-agent shape."""
+    base = dict(raw) if isinstance(raw, Mapping) else {}
+
+    def _agent_state(key: str) -> Dict[str, Any]:
+        existing = base.get(key)
+        state = dict(existing) if isinstance(existing, Mapping) else {}
+        state.setdefault("sections_done", [])
+        state.setdefault("done", False)
+        if "accumulated" not in state:
+            state["accumulated"] = {}
+        return state
+
+    normalized = {
+        "tokens_total": base.get("tokens_total", 0) if isinstance(base.get("tokens_total"), (int, float)) else 0,
+        "general": _agent_state("general"),
+        "style": _agent_state("style"),
+        "cohesion": _agent_state("cohesion"),
+        "summary": _agent_state("summary"),
+    }
+    return normalized
+
+
+def _ordered_section_ids(plan: Mapping[str, Any], sections: Mapping[str, str]) -> list[str]:
+    outline = plan.get("outline", []) if isinstance(plan, Mapping) else []
+    order: list[str] = []
+    try:
+        graph = build_dependency_graph(outline)
+        order = [str(sid) for sid in graph.topological_order()]
+    except Exception:
+        order = [str(item.get("id")) for item in outline if isinstance(item, Mapping) and item.get("id") is not None]
+    # Keep only sections present in the draft
+    order = [sid for sid in order if sid in sections]
+    if not order:
+        order = list(sections.keys())
+    return order
+
+
+def _compose_section_batch(
+    current_sid: str,
+    sections: Mapping[str, str],
+    id_to_section: Mapping[str, Mapping[str, Any]],
+) -> tuple[list[str], str]:
+    section = id_to_section.get(current_sid, {})
+    deps = section.get("dependencies", []) or []
+    dep_ids = [str(d) for d in deps if str(d) in sections]
+    batch_ids: list[str] = []
+    seen: set[str] = set()
+    for sid in dep_ids + [current_sid]:
+        if sid in sections and sid not in seen:
+            batch_ids.append(sid)
+            seen.add(sid)
+    batch_text = "\n\n".join(sections[sid] for sid in batch_ids if sid in sections)
+    return batch_ids, batch_text
 
 
 def _apply_diagram_results(text: str, results: List[Dict[str, Any]], job_paths: JobStoragePaths) -> str:
@@ -536,7 +592,7 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
         payload.pop("written_sections", None)
         tokens_total = tokens_total or _estimate_tokens(document_text)
         publish_stage_event("REVIEW", "QUEUED", payload)
-        send_queue_message(settings.sb_queue_review, payload)
+        send_queue_message(settings.sb_queue_review_general, payload)
         publish_status(
             _stage_completed_event(
                 data["job_id"],
@@ -550,11 +606,7 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
         )
 
 
-def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) -> None:
-    settings = get_settings()
-    reviewer = reviewer or ReviewerAgent()
-    cycle_state = ensure_cycle_state(data)
-    job_paths = _job_paths(data)
+def _ensure_not_exhausted(cycle_state: CycleState, data: Mapping[str, Any], settings: Settings) -> bool:
     if cycle_state.completed >= cycle_state.requested:
         logger.info(
             "Job %s reached maximum cycles (%s); skipping additional review and moving to finalize queue",
@@ -563,187 +615,440 @@ def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) 
         )
         publish_stage_event("DIAGRAM", "QUEUED", data)
         send_queue_message(settings.sb_queue_diagram_prep, data)
+        return False
+    return True
+
+
+def process_review_general(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) -> None:
+    settings = get_settings()
+    reviewer = reviewer or ReviewerAgent()
+    cycle_state = ensure_cycle_state(data)
+    job_paths = _job_paths(data)
+    if not _ensure_not_exhausted(cycle_state, data, settings):
         return
     cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
-    progress = data.get("review_progress") or {
-        "review_agent": False,
-        "style_agent": False,
-        "cohesion_agent": False,
-        "summary_agent": False,
-        "tokens_total": 0,
-    }
-    # determine next agent to run
-    agent_order = [
-        ("review_agent", "general"),
-        ("style_agent", "style"),
-        ("cohesion_agent", "cohesion"),
-        ("summary_agent", "summary"),
-    ]
-    next_agent = None
-    for key, label in agent_order:
-        if not progress.get(key):
-            next_agent = (key, label)
-            break
-
-    if next_agent is None:
-        # all agents done; proceed to finalize review stage
-        artifact_path = job_paths.cycle(cycle_idx, "review.json")
-        review_tokens = int(progress.get("tokens_total") or 0)
-        timing = StageTiming(job_id=data["job_id"], stage="REVIEW", cycle=cycle_idx, start=time.perf_counter(), duration_s=0.0)
-        publish_stage_event("VERIFY", "QUEUED", data)
-        send_queue_message(settings.sb_queue_verify, data)
-        publish_status(
-            _stage_completed_event(
-                data["job_id"],
-                "REVIEW",
-                timing,
-                artifact=artifact_path,
-                tokens=review_tokens,
-                model=settings.reviewer_model,
-                source=data,
-            )
-        )
+    progress = _init_review_progress(data.get("review_progress"))
+    if progress["general"].get("done"):
+        publish_stage_event("REVIEW", "QUEUED", data, extra={"message": "General review already complete; forwarding to style"})
+        send_queue_message(settings.sb_queue_review_style, {**data, "review_progress": progress})
         return
 
-    agent_key, agent_label = next_agent
-    publish_stage_event("REVIEW", "START", data, extra={"message": f"Running {agent_label} reviewer"})
+    publish_stage_event("REVIEW", "START", data, extra={"message": "Running general reviewer"})
     with stage_timer(job_id=data["job_id"], stage="REVIEW", cycle=cycle_idx, user_id=job_paths.user_id) as timing:
         store = BlobStore()
         draft = store.get_text(blob=data["out"])
-        try:
-            if agent_key == "review_agent":
-                sections = extract_sections(draft)
-                outline_ids = [str(s.get("id")) for s in (data.get("plan", {}).get("outline", []) or []) if s.get("id") is not None]
-                ordered_section_ids = [sid for sid in outline_ids if sid in sections] or list(sections.keys())
-                reviewed_sections = {str(s) for s in progress.get("review_sections_done", [])}
-                remaining_sections = [sid for sid in ordered_section_ids if sid not in reviewed_sections]
-                if not sections:
-                    review_json = reviewer.review(plan=data["plan"], draft_markdown=draft)
-                    data["review_json"] = review_json
-                    store.put_text(blob=job_paths.cycle(cycle_idx, "review.json"), text=review_json)
-                    progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(reviewer.llm, "last_usage", None))
-                    progress[agent_key] = True
-                else:
-                    # Review one section plus its dependency sections to keep context focused and bounded.
-                    current_sid = remaining_sections[0]
-                    id_to_section = {str(s.get("id")): s for s in (data.get("plan", {}).get("outline", []) or [])}
-                    deps = id_to_section.get(current_sid, {}).get("dependencies", []) or []
-                    dep_ids = [str(d) for d in deps if str(d) in sections]
-                    batch_ids: list[str] = []
-                    seen: set[str] = set()
-                    for sid in dep_ids + [current_sid]:
-                        if sid in sections and sid not in seen:
-                            batch_ids.append(sid)
-                            seen.add(sid)
-                    batch_text = "\n\n".join(sections[sid] for sid in batch_ids if sid in sections)
-                    review_json = reviewer.review(plan=data["plan"], draft_markdown=batch_text)
-                    try:
-                        parsed = json.loads(review_json)
-                    except Exception:
-                        parsed = {}
-                    accumulated = progress.get("review_accumulated") or {
-                        "findings": [],
-                        "suggested_changes": [],
-                        "revised_markdown": draft,
-                    }
-                    findings = accumulated.get("findings") or []
-                    suggestions = accumulated.get("suggested_changes") or []
-                    if isinstance(parsed, dict):
-                        findings.extend(parsed.get("findings") or [])
-                        suggestions.extend(parsed.get("suggested_changes") or [])
-                        revised_chunk = parsed.get("revised_markdown")
-                        if isinstance(revised_chunk, str) and revised_chunk.strip():
-                            accumulated["revised_markdown"] = merge_revised_markdown(
-                                accumulated.get("revised_markdown") or draft, revised_chunk
-                            )
-                    accumulated["findings"] = findings
-                    accumulated["suggested_changes"] = suggestions
-                    progress["review_accumulated"] = accumulated
-                    reviewed_sections.update([current_sid])
-                    progress["review_sections_done"] = sorted(reviewed_sections)
-                    progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(reviewer.llm, "last_usage", None))
-                    remaining_after_batch = [sid for sid in ordered_section_ids if sid not in reviewed_sections]
-                    if remaining_after_batch:
-                        data["review_progress"] = progress
-                        message = f"Review sections: {len(reviewed_sections)} done of {len(ordered_section_ids)} (current {current_sid})"
-                        publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
-                        send_queue_message(settings.sb_queue_review, data)
-                        status_payload = StatusEvent(
-                            job_id=data["job_id"],
-                            stage="REVIEW_IN_PROGRESS",
-                            ts=time.time(),
-                            message=message,
-                            cycle=cycle_idx,
-                            extra={
-                                "details": {
-                                    "completed_sections": list(reviewed_sections),
-                                    "remaining_sections": remaining_after_batch,
-                                }
-                            },
-                        ).to_payload()
-                        publish_status(status_payload)
-                        return
-                    # all sections processed; finalize aggregated review JSON
-                    final_review_json = json.dumps(progress["review_accumulated"], ensure_ascii=False)
-                    data["review_json"] = final_review_json
-                    store.put_text(blob=job_paths.cycle(cycle_idx, "review.json"), text=final_review_json)
-                    progress[agent_key] = True
-            elif agent_key == "style_agent":
-                style_agent = StyleReviewerAgent()
-                style = style_agent.review_style(plan=data["plan"], markdown=draft)
-                data["style_json"] = style
-                store.put_text(blob=job_paths.cycle(cycle_idx, "style.json"), text=style)
-                progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(style_agent.llm, "last_usage", None))
-            elif agent_key == "cohesion_agent":
-                cohesion_agent = CohesionReviewerAgent()
-                cohesion = cohesion_agent.review_cohesion(plan=data["plan"], markdown=draft)
-                data["cohesion_json"] = cohesion
-                store.put_text(blob=job_paths.cycle(cycle_idx, "cohesion.json"), text=cohesion)
-                progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(cohesion_agent.llm, "last_usage", None))
-            elif agent_key == "summary_agent":
-                summary_agent = SummaryReviewerAgent()
-                summary = summary_agent.review_executive_summary(plan=data["plan"], markdown=draft)
-                data["exec_summary_json"] = summary
-                store.put_text(blob=job_paths.cycle(cycle_idx, "executive_summary.json"), text=summary)
-                progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(summary_agent.llm, "last_usage", None))
-            progress[agent_key] = True
-        except Exception as exc:
-            track_exception(exc, {"job_id": data["job_id"], "stage": "REVIEW", "agent": agent_label})
-            raise
+        sections = extract_sections(draft)
+        id_to_section = {str(s.get("id")): s for s in (data.get("plan", {}).get("outline", []) or [])}
+        ordered_section_ids = _ordered_section_ids(data.get("plan", {}), sections)
+        reviewed_sections = {str(s) for s in progress["general"].get("sections_done", [])}
+        remaining_sections = [sid for sid in ordered_section_ids if sid not in reviewed_sections]
 
-    # requeue for next agent if any remain
+        if not sections:
+            review_json = reviewer.review(plan=data["plan"], draft_markdown=draft)
+            data["review_json"] = review_json
+            store.put_text(blob=job_paths.cycle(cycle_idx, "review.json"), text=review_json)
+            progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(reviewer.llm, "last_usage", None))
+            progress["general"]["done"] = True
+        else:
+            current_sid = remaining_sections[0]
+            _, batch_text = _compose_section_batch(current_sid, sections, id_to_section)
+            review_json = reviewer.review(plan=data["plan"], draft_markdown=batch_text)
+            try:
+                parsed = json.loads(review_json)
+            except Exception:
+                parsed = {}
+            accumulated = progress["general"].get("accumulated") or {
+                "findings": [],
+                "suggested_changes": [],
+                "revised_markdown": draft,
+            }
+            findings = accumulated.get("findings") or []
+            suggestions = accumulated.get("suggested_changes") or []
+            if isinstance(parsed, dict):
+                findings.extend(parsed.get("findings") or [])
+                suggestions.extend(parsed.get("suggested_changes") or [])
+                revised_chunk = parsed.get("revised_markdown")
+                if isinstance(revised_chunk, str) and revised_chunk.strip():
+                    accumulated["revised_markdown"] = merge_revised_markdown(
+                        accumulated.get("revised_markdown") or draft, revised_chunk
+                    )
+            accumulated["findings"] = findings
+            accumulated["suggested_changes"] = suggestions
+            progress["general"]["accumulated"] = accumulated
+            reviewed_sections.update([current_sid])
+            progress["general"]["sections_done"] = sorted(reviewed_sections)
+            progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(reviewer.llm, "last_usage", None))
+            remaining_after_batch = [sid for sid in ordered_section_ids if sid not in reviewed_sections]
+            if remaining_after_batch:
+                data["review_progress"] = progress
+                message = f"General review: {len(reviewed_sections)} of {len(ordered_section_ids)} sections (current {current_sid})"
+                publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
+                send_queue_message(settings.sb_queue_review_general, data)
+                status_payload = StatusEvent(
+                    job_id=data["job_id"],
+                    stage="REVIEW_IN_PROGRESS",
+                    ts=time.time(),
+                    message=message,
+                    cycle=cycle_idx,
+                    extra={
+                        "details": {
+                            "agent": "general",
+                            "completed_sections": list(reviewed_sections),
+                            "remaining_sections": remaining_after_batch,
+                        }
+                    },
+                ).to_payload()
+                publish_status(status_payload)
+                return
+            final_review_json = json.dumps(progress["general"]["accumulated"], ensure_ascii=False)
+            data["review_json"] = final_review_json
+            store.put_text(blob=job_paths.cycle(cycle_idx, "review.json"), text=final_review_json)
+            progress["general"]["done"] = True
+
     data["review_progress"] = progress
-    remaining = [key for key, _ in agent_order if not progress.get(key)]
-    if remaining:
-        message = f"Review progress: {agent_label} done; remaining {len(remaining)} agent(s)"
-        publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
-        send_queue_message(settings.sb_queue_review, data)
-        status_payload = StatusEvent(
-            job_id=data["job_id"],
-            stage="REVIEW_IN_PROGRESS",
-            ts=time.time(),
-            message=message,
-            cycle=cycle_idx,
-            extra={"details": {"completed_agents": [k for k, _ in agent_order if progress.get(k)], "remaining": remaining}},
-        ).to_payload()
-        publish_status(status_payload)
-    else:
-        # all agents done in this pass
-        artifact_path = job_paths.cycle(cycle_idx, "review.json")
-        review_tokens = int(progress.get("tokens_total") or 0)
-        publish_stage_event("VERIFY", "QUEUED", data)
-        send_queue_message(settings.sb_queue_verify, data)
-        publish_status(
-            _stage_completed_event(
-                data["job_id"],
-                "REVIEW",
-                StageTiming(job_id=data["job_id"], stage="REVIEW", cycle=cycle_idx, start=time.perf_counter(), duration_s=0.0),
-                artifact=artifact_path,
-                tokens=review_tokens,
-                model=settings.reviewer_model,
-                source=data,
+    message = "General review complete; queuing style reviewer"
+    publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
+    send_queue_message(settings.sb_queue_review_style, data)
+    status_payload = StatusEvent(
+        job_id=data["job_id"],
+        stage="REVIEW_IN_PROGRESS",
+        ts=time.time(),
+        message=message,
+        cycle=cycle_idx,
+        extra={"details": {"agent": "general", "completed_sections": progress["general"].get("sections_done", [])}},
+    ).to_payload()
+    publish_status(status_payload)
+
+
+def _accumulate_section_guidance(
+    progress: Dict[str, Any],
+    agent_key: str,
+    section_id: str,
+    section_title: str | None,
+    issues: list[Any],
+    suggestions: list[Any],
+    extra_fields: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    agent_state = progress[agent_key]
+    accumulated = agent_state.get("accumulated") or {"issues": [], "suggestions": [], "sections": []}
+    accumulated["issues"] = (accumulated.get("issues") or []) + (issues or [])
+    accumulated["suggestions"] = (accumulated.get("suggestions") or []) + (suggestions or [])
+    section_entry: Dict[str, Any] = {
+        "section_id": section_id,
+        "title": section_title,
+        "issues": issues or [],
+        "suggestions": suggestions or [],
+    }
+    if extra_fields:
+        section_entry.update(extra_fields)
+    sections_list = accumulated.get("sections") or []
+    sections_list.append(section_entry)
+    accumulated["sections"] = sections_list
+    agent_state["accumulated"] = accumulated
+    sections_done = set(agent_state.get("sections_done") or [])
+    sections_done.add(section_id)
+    agent_state["sections_done"] = sorted(sections_done)
+    return progress
+
+
+def process_review_style(data: Dict[str, Any], style_agent: StyleReviewerAgent | None = None) -> None:
+    settings = get_settings()
+    style_agent = style_agent or StyleReviewerAgent()
+    cycle_state = ensure_cycle_state(data)
+    job_paths = _job_paths(data)
+    if not _ensure_not_exhausted(cycle_state, data, settings):
+        return
+    cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
+    progress = _init_review_progress(data.get("review_progress"))
+    if progress["style"].get("done"):
+        publish_stage_event("REVIEW", "QUEUED", data, extra={"message": "Style review already complete; forwarding to cohesion"})
+        send_queue_message(settings.sb_queue_review_cohesion, {**data, "review_progress": progress})
+        return
+
+    publish_stage_event("REVIEW", "START", data, extra={"message": "Running style reviewer"})
+    with stage_timer(job_id=data["job_id"], stage="REVIEW", cycle=cycle_idx, user_id=job_paths.user_id) as timing:
+        store = BlobStore()
+        draft = store.get_text(blob=data["out"])
+        sections = extract_sections(draft)
+        id_to_section = {str(s.get("id")): s for s in (data.get("plan", {}).get("outline", []) or [])}
+        ordered_section_ids = _ordered_section_ids(data.get("plan", {}), sections)
+        reviewed_sections = {str(s) for s in progress["style"].get("sections_done", [])}
+        remaining_sections = [sid for sid in ordered_section_ids if sid not in reviewed_sections]
+
+        if not sections:
+            style_json = style_agent.review_style(plan=data["plan"], markdown=draft)
+            data["style_json"] = style_json
+            store.put_text(blob=job_paths.cycle(cycle_idx, "style.json"), text=style_json)
+            progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(style_agent.llm, "last_usage", None))
+            progress["style"]["done"] = True
+        else:
+            current_sid = remaining_sections[0]
+            _, batch_text = _compose_section_batch(current_sid, sections, id_to_section)
+            style_json = style_agent.review_style(plan=data["plan"], markdown=batch_text)
+            try:
+                parsed = json.loads(style_json)
+            except Exception:
+                parsed = {}
+            issues = parsed.get("issues") if isinstance(parsed, dict) else []
+            suggestions = parsed.get("suggestions") if isinstance(parsed, dict) else []
+            revised_snippets = parsed.get("revised_snippets") if isinstance(parsed, dict) else None
+            progress = _accumulate_section_guidance(
+                progress,
+                "style",
+                current_sid,
+                id_to_section.get(current_sid, {}).get("title"),
+                issues or [],
+                suggestions or [],
+                {"revised_snippets": revised_snippets} if revised_snippets else {},
             )
+            progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(style_agent.llm, "last_usage", None))
+            remaining_after_batch = [sid for sid in ordered_section_ids if sid not in set(progress["style"].get("sections_done", []))]
+            if remaining_after_batch:
+                data["review_progress"] = progress
+                message = f"Style review: {len(progress['style']['sections_done'])} of {len(ordered_section_ids)} sections (current {current_sid})"
+                publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
+                send_queue_message(settings.sb_queue_review_style, data)
+                status_payload = StatusEvent(
+                    job_id=data["job_id"],
+                    stage="REVIEW_IN_PROGRESS",
+                    ts=time.time(),
+                    message=message,
+                    cycle=cycle_idx,
+                    extra={
+                        "details": {
+                            "agent": "style",
+                            "completed_sections": progress["style"]["sections_done"],
+                            "remaining_sections": remaining_after_batch,
+                        }
+                    },
+                ).to_payload()
+                publish_status(status_payload)
+                return
+            final_style_json = json.dumps(progress["style"]["accumulated"], ensure_ascii=False)
+            data["style_json"] = final_style_json
+            store.put_text(blob=job_paths.cycle(cycle_idx, "style.json"), text=final_style_json)
+            progress["style"]["done"] = True
+
+    data["review_progress"] = progress
+    message = "Style review complete; queuing cohesion reviewer"
+    publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
+    send_queue_message(settings.sb_queue_review_cohesion, data)
+    status_payload = StatusEvent(
+        job_id=data["job_id"],
+        stage="REVIEW_IN_PROGRESS",
+        ts=time.time(),
+        message=message,
+        cycle=cycle_idx,
+        extra={"details": {"agent": "style", "completed_sections": progress["style"].get("sections_done", [])}},
+    ).to_payload()
+    publish_status(status_payload)
+
+
+def process_review_cohesion(data: Dict[str, Any], cohesion_agent: CohesionReviewerAgent | None = None) -> None:
+    settings = get_settings()
+    cohesion_agent = cohesion_agent or CohesionReviewerAgent()
+    cycle_state = ensure_cycle_state(data)
+    job_paths = _job_paths(data)
+    if not _ensure_not_exhausted(cycle_state, data, settings):
+        return
+    cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
+    progress = _init_review_progress(data.get("review_progress"))
+    if progress["cohesion"].get("done"):
+        publish_stage_event("REVIEW", "QUEUED", data, extra={"message": "Cohesion review already complete; forwarding to summary"})
+        send_queue_message(settings.sb_queue_review_summary, {**data, "review_progress": progress})
+        return
+
+    publish_stage_event("REVIEW", "START", data, extra={"message": "Running cohesion reviewer"})
+    with stage_timer(job_id=data["job_id"], stage="REVIEW", cycle=cycle_idx, user_id=job_paths.user_id) as timing:
+        store = BlobStore()
+        draft = store.get_text(blob=data["out"])
+        sections = extract_sections(draft)
+        id_to_section = {str(s.get("id")): s for s in (data.get("plan", {}).get("outline", []) or [])}
+        ordered_section_ids = _ordered_section_ids(data.get("plan", {}), sections)
+        reviewed_sections = {str(s) for s in progress["cohesion"].get("sections_done", [])}
+        remaining_sections = [sid for sid in ordered_section_ids if sid not in reviewed_sections]
+
+        if not sections:
+            cohesion_json = cohesion_agent.review_cohesion(plan=data["plan"], markdown=draft)
+            data["cohesion_json"] = cohesion_json
+            store.put_text(blob=job_paths.cycle(cycle_idx, "cohesion.json"), text=cohesion_json)
+            progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(cohesion_agent.llm, "last_usage", None))
+            progress["cohesion"]["done"] = True
+        else:
+            current_sid = remaining_sections[0]
+            _, batch_text = _compose_section_batch(current_sid, sections, id_to_section)
+            cohesion_json = cohesion_agent.review_cohesion(plan=data["plan"], markdown=batch_text)
+            try:
+                parsed = json.loads(cohesion_json)
+            except Exception:
+                parsed = {}
+            issues = parsed.get("issues") if isinstance(parsed, dict) else []
+            suggestions = parsed.get("suggestions") if isinstance(parsed, dict) else []
+            progress = _accumulate_section_guidance(
+                progress,
+                "cohesion",
+                current_sid,
+                id_to_section.get(current_sid, {}).get("title"),
+                issues or [],
+                suggestions or [],
+            )
+            progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(cohesion_agent.llm, "last_usage", None))
+            remaining_after_batch = [sid for sid in ordered_section_ids if sid not in set(progress["cohesion"].get("sections_done", []))]
+            if remaining_after_batch:
+                data["review_progress"] = progress
+                message = f"Cohesion review: {len(progress['cohesion']['sections_done'])} of {len(ordered_section_ids)} sections (current {current_sid})"
+                publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
+                send_queue_message(settings.sb_queue_review_cohesion, data)
+                status_payload = StatusEvent(
+                    job_id=data["job_id"],
+                    stage="REVIEW_IN_PROGRESS",
+                    ts=time.time(),
+                    message=message,
+                    cycle=cycle_idx,
+                    extra={
+                        "details": {
+                            "agent": "cohesion",
+                            "completed_sections": progress["cohesion"]["sections_done"],
+                            "remaining_sections": remaining_after_batch,
+                        }
+                    },
+                ).to_payload()
+                publish_status(status_payload)
+                return
+            final_cohesion_json = json.dumps(progress["cohesion"]["accumulated"], ensure_ascii=False)
+            data["cohesion_json"] = final_cohesion_json
+            store.put_text(blob=job_paths.cycle(cycle_idx, "cohesion.json"), text=final_cohesion_json)
+            progress["cohesion"]["done"] = True
+
+    data["review_progress"] = progress
+    message = "Cohesion review complete; queuing summary reviewer"
+    publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
+    send_queue_message(settings.sb_queue_review_summary, data)
+    status_payload = StatusEvent(
+        job_id=data["job_id"],
+        stage="REVIEW_IN_PROGRESS",
+        ts=time.time(),
+        message=message,
+        cycle=cycle_idx,
+        extra={"details": {"agent": "cohesion", "completed_sections": progress["cohesion"].get("sections_done", [])}},
+    ).to_payload()
+    publish_status(status_payload)
+
+
+def process_review_summary(data: Dict[str, Any], summary_agent: SummaryReviewerAgent | None = None) -> None:
+    settings = get_settings()
+    summary_agent = summary_agent or SummaryReviewerAgent()
+    cycle_state = ensure_cycle_state(data)
+    job_paths = _job_paths(data)
+    if not _ensure_not_exhausted(cycle_state, data, settings):
+        return
+    cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
+    progress = _init_review_progress(data.get("review_progress"))
+    if progress["summary"].get("done"):
+        publish_stage_event("VERIFY", "QUEUED", data, extra={"message": "Summary review already complete; forwarding to verify"})
+        send_queue_message(settings.sb_queue_verify, {**data, "review_progress": progress})
+        return
+
+    publish_stage_event("REVIEW", "START", data, extra={"message": "Running executive summary reviewer"})
+    with stage_timer(job_id=data["job_id"], stage="REVIEW", cycle=cycle_idx, user_id=job_paths.user_id) as timing:
+        store = BlobStore()
+        draft = store.get_text(blob=data["out"])
+        sections = extract_sections(draft)
+        id_to_section = {str(s.get("id")): s for s in (data.get("plan", {}).get("outline", []) or [])}
+        ordered_section_ids = _ordered_section_ids(data.get("plan", {}), sections)
+        reviewed_sections = {str(s) for s in progress["summary"].get("sections_done", [])}
+        remaining_sections = [sid for sid in ordered_section_ids if sid not in reviewed_sections]
+
+        if not sections:
+            summary_json = summary_agent.review_executive_summary(plan=data["plan"], markdown=draft)
+            data["exec_summary_json"] = summary_json
+            store.put_text(blob=job_paths.cycle(cycle_idx, "executive_summary.json"), text=summary_json)
+            progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(summary_agent.llm, "last_usage", None))
+            progress["summary"]["done"] = True
+        else:
+            current_sid = remaining_sections[0]
+            _, batch_text = _compose_section_batch(current_sid, sections, id_to_section)
+            summary_json = summary_agent.review_executive_summary(plan=data["plan"], markdown=batch_text)
+            try:
+                parsed = json.loads(summary_json)
+            except Exception:
+                parsed = {}
+            issues = parsed.get("issues") if isinstance(parsed, dict) else []
+            suggestions = parsed.get("suggestions") if isinstance(parsed, dict) else []
+            section_summary = parsed.get("summary") if isinstance(parsed, dict) else None
+            progress = _accumulate_section_guidance(
+                progress,
+                "summary",
+                current_sid,
+                id_to_section.get(current_sid, {}).get("title"),
+                issues or [],
+                suggestions or [],
+                {"summary": section_summary} if section_summary else {},
+            )
+            progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(summary_agent.llm, "last_usage", None))
+            remaining_after_batch = [sid for sid in ordered_section_ids if sid not in set(progress["summary"].get("sections_done", []))]
+            if remaining_after_batch:
+                data["review_progress"] = progress
+                message = f"Summary review: {len(progress['summary']['sections_done'])} of {len(ordered_section_ids)} sections (current {current_sid})"
+                publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
+                send_queue_message(settings.sb_queue_review_summary, data)
+                status_payload = StatusEvent(
+                    job_id=data["job_id"],
+                    stage="REVIEW_IN_PROGRESS",
+                    ts=time.time(),
+                    message=message,
+                    cycle=cycle_idx,
+                    extra={
+                        "details": {
+                            "agent": "summary",
+                            "completed_sections": progress["summary"]["sections_done"],
+                            "remaining_sections": remaining_after_batch,
+                        }
+                    },
+                ).to_payload()
+                publish_status(status_payload)
+                return
+            sections_entries = progress["summary"]["accumulated"].get("sections", []) if isinstance(progress["summary"].get("accumulated"), dict) else []
+            combined_summary_parts: list[str] = []
+            for entry in sections_entries:
+                if not isinstance(entry, Mapping):
+                    continue
+                title = entry.get("title") or entry.get("section_id")
+                summary_text = entry.get("summary")
+                if summary_text:
+                    combined_summary_parts.append(f"{title}: {summary_text}")
+            combined_summary = "\n\n".join(combined_summary_parts).strip() if combined_summary_parts else parsed.get("summary", "")
+            final_summary_json = json.dumps(
+                {
+                    **(progress["summary"].get("accumulated") or {}),
+                    "summary": combined_summary or (parsed.get("summary") if isinstance(parsed, dict) else ""),
+                },
+                ensure_ascii=False,
+            )
+            data["exec_summary_json"] = final_summary_json
+            store.put_text(blob=job_paths.cycle(cycle_idx, "executive_summary.json"), text=final_summary_json)
+            progress["summary"]["done"] = True
+
+    data["review_progress"] = progress
+    review_tokens = int(progress.get("tokens_total") or 0)
+    publish_stage_event("VERIFY", "QUEUED", data, extra={"message": "Summary review complete; queuing verify"})
+    send_queue_message(settings.sb_queue_verify, data)
+    publish_status(
+        _stage_completed_event(
+            data["job_id"],
+            "REVIEW",
+            timing,
+            artifact=job_paths.cycle(cycle_idx, "review.json"),
+            tokens=review_tokens,
+            model=settings.reviewer_model,
+            source=data,
         )
+    )
+
+
+# Backward-compatible entrypoint for legacy single-queue review
+def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) -> None:
+    process_review_general(data, reviewer)
 
 
 def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) -> None:
@@ -962,13 +1267,14 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
         "placeholder_sections": [],
         "rewritten_sections": list(rewritten_sections),
     }
+    payload.pop("review_progress", None)
     next_completed = min(cycle_state.requested, cycle_state.completed + 1)
     next_cycle_state = CycleState(cycle_state.requested, next_completed)
     next_cycle_state.apply(payload)
     payload["requires_rewrite"] = False
     if next_cycle_state.completed < next_cycle_state.requested:
         publish_stage_event("REVIEW", "QUEUED", payload)
-        send_queue_message(settings.sb_queue_review, payload)
+        send_queue_message(settings.sb_queue_review_general, payload)
     else:
         publish_stage_event("DIAGRAM", "QUEUED", payload)
         send_queue_message(settings.sb_queue_diagram_prep, payload)

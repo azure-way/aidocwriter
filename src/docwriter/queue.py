@@ -202,7 +202,23 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
 
 
 def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) -> None:
-    stages_core.process_review(data, reviewer)
+    stages_core.process_review_general(data, reviewer)
+
+
+def process_review_general(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) -> None:
+    stages_core.process_review_general(data, reviewer)
+
+
+def process_review_style(data: Dict[str, Any], style_reviewer: StyleReviewerAgent | None = None) -> None:
+    stages_core.process_review_style(data, style_reviewer)
+
+
+def process_review_cohesion(data: Dict[str, Any], cohesion_reviewer: CohesionReviewerAgent | None = None) -> None:
+    stages_core.process_review_cohesion(data, cohesion_reviewer)
+
+
+def process_review_summary(data: Dict[str, Any], summary_reviewer: SummaryReviewerAgent | None = None) -> None:
+    stages_core.process_review_summary(data, summary_reviewer)
 
 
 def process_verify(data: Dict[str, Any], verifier: VerifierAgent | None = None) -> None:

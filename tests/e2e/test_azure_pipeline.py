@@ -11,7 +11,10 @@ from docwriter.queue import (
     process_plan_intake,
     process_plan,
     process_write,
-    process_review,
+    process_review_general,
+    process_review_style,
+    process_review_cohesion,
+    process_review_summary,
     process_verify,
     process_rewrite,
     process_finalize,
@@ -114,14 +117,20 @@ def test_e2e_local_pipeline(monkeypatch):
 
         # Writing
         process_write(payload)
-        payload = pop_payload(settings.sb_queue_review)
-        print("[WRITE] Draft written and queued for review")
+        payload = pop_payload(settings.sb_queue_review_general)
+        print("[WRITE] Draft written and queued for general review")
 
         # Review / verify loop until finalized
         review_payload = payload
         while True:
-            process_review(review_payload)
-            print("[REVIEW] General/style/cohesion reviews completed")
+            process_review_general(review_payload)
+            style_payload = pop_payload(settings.sb_queue_review_style)
+            process_review_style(style_payload)
+            cohesion_payload = pop_payload(settings.sb_queue_review_cohesion)
+            process_review_cohesion(cohesion_payload)
+            summary_payload = pop_payload(settings.sb_queue_review_summary)
+            process_review_summary(summary_payload)
+            print("[REVIEW] General/style/cohesion/summary reviews completed")
             verify_payload = pop_payload(settings.sb_queue_verify)
             process_verify(verify_payload)
             print("[VERIFY] Verification completed")
@@ -129,7 +138,7 @@ def test_e2e_local_pipeline(monkeypatch):
             if rewrite_payload:
                 process_rewrite(rewrite_payload)
                 print("[REWRITE] Targeted rewrites applied")
-                review_payload = pop_payload(settings.sb_queue_review)
+                review_payload = pop_payload(settings.sb_queue_review_general)
                 continue
             diagram_prep_payload = pop_payload(settings.sb_queue_diagram_prep)
             process_diagram_prep(diagram_prep_payload)

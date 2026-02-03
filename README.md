@@ -46,7 +46,11 @@
    export SERVICE_BUS_QUEUE_INTAKE_RESUME=docwriter-intake-resume
    export SERVICE_BUS_QUEUE_PLAN=docwriter-plan
    export SERVICE_BUS_QUEUE_WRITE=docwriter-write
-   export SERVICE_BUS_QUEUE_REVIEW=docwriter-review
+   export SERVICE_BUS_QUEUE_REVIEW=docwriter-review               # legacy alias for general review
+   export SERVICE_BUS_QUEUE_REVIEW_GENERAL=docwriter-review       # general reviewer
+   export SERVICE_BUS_QUEUE_REVIEW_STYLE=docwriter-review-style   # style reviewer
+   export SERVICE_BUS_QUEUE_REVIEW_COHESION=docwriter-review-cohesion
+   export SERVICE_BUS_QUEUE_REVIEW_SUMMARY=docwriter-review-summary
    export SERVICE_BUS_QUEUE_VERIFY=docwriter-verify
    export SERVICE_BUS_QUEUE_REWRITE=docwriter-rewrite
    export SERVICE_BUS_QUEUE_DIAGRAM_PREP=docwriter-diagram-prep
@@ -296,7 +300,11 @@ Use these steps to reconstruct the environment in a fresh session:
    export SERVICE_BUS_QUEUE_INTAKE_RESUME=docwriter-intake-resume
    export SERVICE_BUS_QUEUE_PLAN=docwriter-plan
    export SERVICE_BUS_QUEUE_WRITE=docwriter-write
-   export SERVICE_BUS_QUEUE_REVIEW=docwriter-review
+   export SERVICE_BUS_QUEUE_REVIEW=docwriter-review               # legacy alias for general review
+   export SERVICE_BUS_QUEUE_REVIEW_GENERAL=docwriter-review
+   export SERVICE_BUS_QUEUE_REVIEW_STYLE=docwriter-review-style
+   export SERVICE_BUS_QUEUE_REVIEW_COHESION=docwriter-review-cohesion
+   export SERVICE_BUS_QUEUE_REVIEW_SUMMARY=docwriter-review-summary
    export SERVICE_BUS_QUEUE_VERIFY=docwriter-verify
   export SERVICE_BUS_QUEUE_REWRITE=docwriter-rewrite
   export SERVICE_BUS_QUEUE_DIAGRAM_PREP=docwriter-diagram-prep
