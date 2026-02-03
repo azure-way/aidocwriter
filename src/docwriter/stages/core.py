@@ -21,6 +21,7 @@ from docwriter.graph import build_dependency_graph
 from docwriter.messaging import publish_stage_event, publish_status, send_queue_message
 from docwriter.models import StatusEvent
 from docwriter.stage_utils import (
+    extract_sections,
     find_placeholder_sections,
     insert_table_of_contents,
     merge_revised_markdown,
@@ -611,10 +612,82 @@ def process_review(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) 
         draft = store.get_text(blob=data["out"])
         try:
             if agent_key == "review_agent":
-                review_json = reviewer.review(plan=data["plan"], draft_markdown=draft)
-                data["review_json"] = review_json
-                store.put_text(blob=job_paths.cycle(cycle_idx, "review.json"), text=review_json)
-                progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(reviewer.llm, "last_usage", None))
+                sections = extract_sections(draft)
+                outline_ids = [str(s.get("id")) for s in (data.get("plan", {}).get("outline", []) or []) if s.get("id") is not None]
+                ordered_section_ids = [sid for sid in outline_ids if sid in sections] or list(sections.keys())
+                reviewed_sections = {str(s) for s in progress.get("review_sections_done", [])}
+                remaining_sections = [sid for sid in ordered_section_ids if sid not in reviewed_sections]
+                if not sections:
+                    review_json = reviewer.review(plan=data["plan"], draft_markdown=draft)
+                    data["review_json"] = review_json
+                    store.put_text(blob=job_paths.cycle(cycle_idx, "review.json"), text=review_json)
+                    progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(reviewer.llm, "last_usage", None))
+                    progress[agent_key] = True
+                else:
+                    # Review one section plus its dependency sections to keep context focused and bounded.
+                    current_sid = remaining_sections[0]
+                    id_to_section = {str(s.get("id")): s for s in (data.get("plan", {}).get("outline", []) or [])}
+                    deps = id_to_section.get(current_sid, {}).get("dependencies", []) or []
+                    dep_ids = [str(d) for d in deps if str(d) in sections]
+                    batch_ids: list[str] = []
+                    seen: set[str] = set()
+                    for sid in dep_ids + [current_sid]:
+                        if sid in sections and sid not in seen:
+                            batch_ids.append(sid)
+                            seen.add(sid)
+                    batch_text = "\n\n".join(sections[sid] for sid in batch_ids if sid in sections)
+                    review_json = reviewer.review(plan=data["plan"], draft_markdown=batch_text)
+                    try:
+                        parsed = json.loads(review_json)
+                    except Exception:
+                        parsed = {}
+                    accumulated = progress.get("review_accumulated") or {
+                        "findings": [],
+                        "suggested_changes": [],
+                        "revised_markdown": draft,
+                    }
+                    findings = accumulated.get("findings") or []
+                    suggestions = accumulated.get("suggested_changes") or []
+                    if isinstance(parsed, dict):
+                        findings.extend(parsed.get("findings") or [])
+                        suggestions.extend(parsed.get("suggested_changes") or [])
+                        revised_chunk = parsed.get("revised_markdown")
+                        if isinstance(revised_chunk, str) and revised_chunk.strip():
+                            accumulated["revised_markdown"] = merge_revised_markdown(
+                                accumulated.get("revised_markdown") or draft, revised_chunk
+                            )
+                    accumulated["findings"] = findings
+                    accumulated["suggested_changes"] = suggestions
+                    progress["review_accumulated"] = accumulated
+                    reviewed_sections.update([current_sid])
+                    progress["review_sections_done"] = sorted(reviewed_sections)
+                    progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(reviewer.llm, "last_usage", None))
+                    remaining_after_batch = [sid for sid in ordered_section_ids if sid not in reviewed_sections]
+                    if remaining_after_batch:
+                        data["review_progress"] = progress
+                        message = f"Review sections: {len(reviewed_sections)} done of {len(ordered_section_ids)} (current {current_sid})"
+                        publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
+                        send_queue_message(settings.sb_queue_review, data)
+                        status_payload = StatusEvent(
+                            job_id=data["job_id"],
+                            stage="REVIEW_IN_PROGRESS",
+                            ts=time.time(),
+                            message=message,
+                            cycle=cycle_idx,
+                            extra={
+                                "details": {
+                                    "completed_sections": list(reviewed_sections),
+                                    "remaining_sections": remaining_after_batch,
+                                }
+                            },
+                        ).to_payload()
+                        publish_status(status_payload)
+                        return
+                    # all sections processed; finalize aggregated review JSON
+                    final_review_json = json.dumps(progress["review_accumulated"], ensure_ascii=False)
+                    data["review_json"] = final_review_json
+                    store.put_text(blob=job_paths.cycle(cycle_idx, "review.json"), text=final_review_json)
+                    progress[agent_key] = True
             elif agent_key == "style_agent":
                 style_agent = StyleReviewerAgent()
                 style = style_agent.review_style(plan=data["plan"], markdown=draft)
