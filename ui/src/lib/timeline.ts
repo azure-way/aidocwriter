@@ -87,7 +87,7 @@ export const determineEventPhase = (event: TimelineEvent | undefined): StagePhas
   if (/_DONE$/u.test(stage)) {
     return "complete";
   }
-  if (/_START$/u.test(stage)) {
+  if (/_START$/u.test(stage) || /_IN_PROGRESS$/u.test(stage)) {
     return "in_progress";
   }
   if (/_QUEUED$/u.test(stage)) {

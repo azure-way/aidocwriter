@@ -271,7 +271,7 @@ export const TimelineStageCard: FC<TimelineStageCardProps> = ({
                                     </button>
                                     {isSubExpanded && (
                                       <div className="mt-3 space-y-3 border-t border-slate-100 pt-3">
-                                        {substep.detail.timeline.length > 0 ? (
+                                        {/* {substep.detail.timeline.length > 0 ? (
                                           <ol className="space-y-2 text-xs text-slate-500">
                                             {substep.detail.timeline.map((item) => (
                                               <li
@@ -285,7 +285,7 @@ export const TimelineStageCard: FC<TimelineStageCardProps> = ({
                                               </li>
                                             ))}
                                           </ol>
-                                        ) : null}
+                                        ) : null} */}
                                         {substep.detail.metadataEntries.length > 0 ? (
                                           <MetadataGrid entries={substep.detail.metadataEntries} />
                                         ) : (
