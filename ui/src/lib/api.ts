@@ -68,16 +68,56 @@ async function request(path: string, options: RequestOptions = {}) {
   return res.json();
 }
 
-const deriveArtifactName = (_jobId: string, rawPath: string): string => {
+const deriveArtifactPath = (rawPath: string): { relativePath: string; fileName: string } => {
   if (!rawPath) {
     throw new Error("Artifact path missing");
   }
   const cleaned = rawPath.replace(/^\/+/, "");
-  const parts = cleaned.split("/");
-  return parts[parts.length - 1] || cleaned;
+  const segments = cleaned.split("/").filter(Boolean);
+  if (!segments.length) {
+    throw new Error("Artifact path missing");
+  }
+  const fileName = segments[segments.length - 1] || cleaned;
+  const relativePath =
+    segments.length >= 3 && segments[0] === "jobs" ? segments.slice(3).join("/") : segments.join("/");
+  return { relativePath: relativePath || fileName, fileName };
 };
 
-export async function downloadArtifact(jobId: string, rawPath: string): Promise<Blob> {
+const parseContentDispositionName = (header: string | null): string | null => {
+  if (!header) return null;
+  const filenameStarMatch = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (filenameStarMatch?.[1]) {
+    try {
+      return decodeURIComponent(filenameStarMatch[1]);
+    } catch {
+      return filenameStarMatch[1];
+    }
+  }
+  const filenameMatch = header.match(/filename="?([^\";]+)"?/i);
+  return filenameMatch?.[1] ?? null;
+};
+
+const inferExtensionFromContentType = (contentType?: string | null): string | null => {
+  if (!contentType) return null;
+  const normalized = contentType.split(";")[0]?.trim().toLowerCase();
+  if (!normalized) return null;
+  const map: Record<string, string> = {
+    "application/pdf": "pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "text/markdown": "md",
+    "text/x-markdown": "md",
+    "text/plain": "txt",
+  };
+  return map[normalized] ?? null;
+};
+
+export type ArtifactDownload = {
+  blob: Blob;
+  fileName: string;
+  contentType?: string;
+};
+
+export async function downloadArtifact(jobId: string, rawPath: string): Promise<ArtifactDownload> {
   if (!API_BASE) {
     throw new Error("NEXT_PUBLIC_API_BASE_URL is not set");
   }
@@ -86,9 +126,9 @@ export async function downloadArtifact(jobId: string, rawPath: string): Promise<
   }
   const token = await getAccessToken();
   const url = new URL("/jobs/artifacts", API_BASE);
-  const artifactName = deriveArtifactName(jobId, rawPath);
+  const { relativePath, fileName: artifactFileName } = deriveArtifactPath(rawPath);
   url.searchParams.set("job_id", jobId);
-  url.searchParams.set("name", artifactName);
+  url.searchParams.set("name", relativePath);
   const res = await fetch(url.toString(), {
     cache: "no-store",
     headers: {
@@ -99,7 +139,41 @@ export async function downloadArtifact(jobId: string, rawPath: string): Promise<
     const text = await res.text();
     throw new Error(text || `Failed to download artifact (${res.status})`);
   }
-  return res.blob();
+  const contentType = res.headers.get("content-type") ?? undefined;
+  const headerName = parseContentDispositionName(res.headers.get("content-disposition"));
+  const preferredName = headerName?.trim() || artifactFileName || "artifact";
+  const hasExtension = /\.[^./\s]+$/.test(preferredName);
+  const fallbackExt = inferExtensionFromContentType(contentType);
+  const fileName = hasExtension || !fallbackExt ? preferredName : `${preferredName}.${fallbackExt}`;
+
+  const blob = await res.blob();
+  return { blob, fileName, contentType };
+}
+
+export async function downloadDiagramArchive(jobId: string): Promise<ArtifactDownload> {
+  if (!API_BASE) {
+    throw new Error("NEXT_PUBLIC_API_BASE_URL is not set");
+  }
+  if (!jobId) {
+    throw new Error("jobId is required to download diagram archive");
+  }
+  const token = await getAccessToken();
+  const url = new URL(`/jobs/${encodeURIComponent(jobId)}/diagrams/archive`, API_BASE);
+  const res = await fetch(url.toString(), {
+    cache: "no-store",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Failed to download diagram archive (${res.status})`);
+  }
+  const contentType = res.headers.get("content-type") ?? undefined;
+  const headerName = parseContentDispositionName(res.headers.get("content-disposition"));
+  const preferredName = headerName?.trim() || `${jobId}-diagrams.zip`;
+  const blob = await res.blob();
+  return { blob, fileName: preferredName, contentType };
 }
 
 export async function fetchIntakeQuestions(title: string) {

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { GlassCard } from "@/components/GlassCard";
 import { useUser } from "@auth0/nextjs-auth0/client";
-import { downloadArtifact, fetchDocuments, resumeJob } from "@/lib/api";
+import { downloadArtifact, downloadDiagramArchive, fetchDocuments, resumeJob } from "@/lib/api";
 import { determineEventPhase, normalizeStageName } from "@/lib/timeline";
 
 interface DocumentSummary {
@@ -89,12 +89,40 @@ export default function WorkspacePage() {
 
   const downloadArtifactFile = useCallback(async (jobId: string, path: string) => {
     try {
-      const blob = await downloadArtifact(jobId, path);
-      const fileName = path.split("/").pop() ?? "artifact";
+      const { blob, fileName, contentType } = await downloadArtifact(jobId, path);
+      const rawName = (fileName || path.split("/").pop() || "artifact").trim();
+      const existingExt = rawName.match(/\\.([^.\\s/]+)$/)?.[1];
+      const pathExt = path.match(/\\.([^.\\s/]+)$/)?.[1];
+      const typeExtMap: Record<string, string> = {
+        "application/pdf": "pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+        "text/markdown": "md",
+        "text/x-markdown": "md",
+      };
+      const typeExt = contentType ? typeExtMap[contentType.split(";")[0]?.trim().toLowerCase() || ""] : undefined;
+      const ext = existingExt || pathExt || typeExt || "";
+      const resolvedName = ext ? `${jobId}.${ext}` : rawName;
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = fileName;
+      link.download = resolvedName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(err);
+    }
+  }, []);
+
+  const downloadDiagramArchiveFile = useCallback(async (jobId: string) => {
+    try {
+      const { blob, fileName } = await downloadDiagramArchive(jobId);
+      const resolvedName = (fileName || `${jobId}-diagrams.zip`).trim();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = resolvedName;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -248,6 +276,15 @@ export default function WorkspacePage() {
                         onClick={() => downloadArtifactFile(doc.job_id, doc.artifact!)}
                       >
                         Download artifact
+                      </button>
+                    ) : null}
+                    {doc.artifact ? (
+                      <button
+                        type="button"
+                        className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400"
+                        onClick={() => downloadDiagramArchiveFile(doc.job_id)}
+                      >
+                        Download diagrams
                       </button>
                     ) : null}
                     {errored ? (

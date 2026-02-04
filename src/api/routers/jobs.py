@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import io
 import json
 import re
 import time
+import zipfile
 
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from azure.core.exceptions import ResourceNotFoundError, HttpResponseError
@@ -284,6 +286,58 @@ def download_artifact(
     content_type = props.content_settings.content_type or "application/octet-stream"
     headers = {"Content-Disposition": f'attachment; filename="{download_name}"'}
     return Response(content=data, media_type=content_type, headers=headers)
+
+
+@router.get("/{job_id}/diagrams/archive")
+def download_diagram_archive(
+    job_id: str,
+    store: BlobStore = Depends(blob_store_dependency),
+    user_id: str = Depends(current_user_dependency),
+) -> Response:
+    """Download a ZIP containing diagram images and PlantUML source for a job."""
+    index_store = get_document_index_store()
+    existing = index_store.get(user_id, job_id)
+    if existing is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found for user")
+
+    job_paths = JobStoragePaths(user_id=user_id, job_id=job_id)
+    prefixes = [
+        f"{job_paths.root}/images/",
+        f"{job_paths.root}/diagrams/",
+    ]
+
+    buffer = io.BytesIO()
+    found = False
+    try:
+        with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for prefix in prefixes:
+                for blob_name in store.list_blobs(prefix):
+                    try:
+                        data = store.container.get_blob_client(blob_name).download_blob().readall()
+                    except ResourceNotFoundError:
+                        continue
+                    except HttpResponseError as exc:
+                        raise HTTPException(
+                            status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Failed to download blob: {exc}"
+                        ) from exc
+                    arcname = blob_name
+                    root_prefix = f"{job_paths.root}/"
+                    if arcname.startswith(root_prefix):
+                        arcname = arcname[len(root_prefix) :]
+                    if not arcname:
+                        arcname = blob_name.split("/")[-1] or "diagram_asset"
+                    archive.writestr(arcname, data)
+                    found = True
+        if not found:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No diagram assets found")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to build diagram archive") from exc
+
+    buffer.seek(0)
+    headers = {"Content-Disposition": f'attachment; filename="{job_id}-diagrams.zip"'}
+    return Response(content=buffer.getvalue(), media_type="application/zip", headers=headers)
 
 
 def _resolve_legacy_artifact_path(path: str, user_id: str) -> tuple[str, str, str]:

@@ -123,3 +123,12 @@ class BlobStore:
 
     def get_bytes(self, blob: str) -> bytes:
         return self.container.download_blob(blob).readall()
+
+    def list_blobs(self, prefix: str) -> list[str]:
+        """List blob names under a prefix."""
+        if not prefix:
+            return []
+        try:
+            return [blob.name for blob in self.container.list_blobs(name_starts_with=prefix)]
+        except Exception:
+            return []

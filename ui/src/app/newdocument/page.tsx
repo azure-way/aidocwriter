@@ -13,6 +13,7 @@ import {
   fetchJobStatus,
   fetchJobTimeline,
   downloadArtifact,
+  downloadDiagramArchive,
   resumeJob,
 } from "@/lib/api";
 import {
@@ -541,25 +542,6 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
     [extractParsedMessage, formatDuration, formatStage, getTokensFromEvent]
   );
 
-  const openArtifact = useCallback(
-    async (job: string | null, path: string) => {
-      if (!job) {
-        console.warn("Attempted to open artifact without job ID");
-        return;
-      }
-      try {
-        const blob = await downloadArtifact(job, path);
-        const url = URL.createObjectURL(blob);
-        window.open(url, "_blank", "noopener,noreferrer");
-        setTimeout(() => URL.revokeObjectURL(url), 5000);
-      } catch (err) {
-        console.error(err);
-        setError("Failed to open artifact");
-      }
-    },
-    []
-  );
-
   const downloadArtifactFile = useCallback(
     async (job: string | null, path: string) => {
       if (!job) {
@@ -567,20 +549,57 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
         return;
       }
       try {
-        const blob = await downloadArtifact(job, path);
-        const fileName = path.split("/").pop() ?? "artifact";
+        const { blob, fileName, contentType } = await downloadArtifact(job, path);
+        const rawName = (fileName || path.split("/").pop() || "artifact").trim();
+        const existingExt = rawName.match(/\\.([^.\\s/]+)$/)?.[1];
+        const pathExt = path.match(/\\.([^.\\s/]+)$/)?.[1];
+        const typeExtMap: Record<string, string> = {
+          "application/pdf": "pdf",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+          "text/markdown": "md",
+          "text/x-markdown": "md",
+        };
+        const typeExt = contentType ? typeExtMap[contentType.split(";")[0]?.trim().toLowerCase() || ""] : undefined;
+        const ext = existingExt || pathExt || typeExt || "";
+        const resolvedName = ext ? `${job}.${ext}` : rawName;
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = url;
-        link.download = fileName;
+        link.download = resolvedName;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
-        showNotice(`Download started for ${fileName}`);
+        showNotice(`Download started for ${resolvedName}`);
       } catch (err) {
         console.error(err);
         setError("Failed to download artifact");
+      }
+    },
+    [showNotice]
+  );
+
+  const downloadDiagramArchiveFile = useCallback(
+    async (job: string | null) => {
+      if (!job) {
+        console.warn("Attempted to download diagram archive without job ID");
+        return;
+      }
+      try {
+        const { blob, fileName } = await downloadDiagramArchive(job);
+        const resolvedName = (fileName || `${job}-diagrams.zip`).trim();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = resolvedName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        showNotice(`Download started for ${resolvedName}`);
+      } catch (err) {
+        console.error(err);
+        setError("Failed to download diagram archive");
       }
     },
     [showNotice]
@@ -626,13 +645,6 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
                 <button
                   type="button"
                   className={buttonClass}
-                  onClick={() => openArtifact(jobId, artifactPath)}
-                >
-                  Open
-                </button>
-                <button
-                  type="button"
-                  className={buttonClass}
                   onClick={() => downloadArtifactFile(jobId, artifactPath)}
                 >
                   Download
@@ -640,10 +652,22 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
               </div>
             </div>
           ))}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={chipClass}>Diagram assets</span>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className={buttonClass}
+                onClick={() => downloadDiagramArchiveFile(jobId)}
+              >
+                Download ZIP
+              </button>
+            </div>
+          </div>
         </div>
       );
     },
-    [downloadArtifactFile, openArtifact, jobId]
+    [downloadArtifactFile, downloadDiagramArchiveFile, jobId]
   );
 
   useEffect(() => {
