@@ -75,7 +75,7 @@ class Settings:
     sb_topic_status: str = os.getenv("DOCWRITER_DEFAULT_STATUS_TOPIC", "aidocwriter-status")
     sb_status_subscription: str = "console"
     sb_lock_renew_s: float = 900.0
-    write_batch_size: int = 5
+    write_batch_size: int = 3
     review_batch_size: int = 3
     review_max_prompt_tokens: int = 15000
 

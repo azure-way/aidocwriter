@@ -606,6 +606,7 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
     blob_path = data.get("out")
     if not isinstance(blob_path, str) or not blob_path:
         blob_path = BlobStore().allocate_document_blob(job_paths.job_id, job_paths.user_id)
+    write_batch_size = max(1, int(data.get("write_batch_size") or settings.write_batch_size or 5))
 
     tokens_total = int(data.get("write_tokens_total") or 0)
     written_sections_raw = data.get("written_sections") or []
@@ -637,8 +638,7 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
 
         document_text_parts: list[str] = [existing_body] if existing_body else []
         remaining = [sid for sid in order if sid not in written_sections]
-        batch_size = max(1, int(get_settings().write_batch_size or 5))
-        batch = remaining[:batch_size]
+        batch = remaining[:write_batch_size]
         for idx, sid in enumerate(batch, start=1):
             section = id_to_section[sid]
             deps = section.get("dependencies", []) or []
@@ -669,6 +669,7 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
         "dependency_summaries": dependency_summaries,
         "written_sections": list(written_sections),
         "write_tokens_total": tokens_total,
+        "write_batch_size": write_batch_size,
     }
     try:
         store = BlobStore()
