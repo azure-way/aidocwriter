@@ -41,6 +41,13 @@ ENCODING_NAME = "cl100k_base"
 
 logger = logging.getLogger(__name__)
 
+REVIEW_AGENT_STAGES = {
+    "general": "REVIEW_GENERAL",
+    "style": "REVIEW_STYLE",
+    "cohesion": "REVIEW_COHESION",
+    "summary": "REVIEW_SUMMARY",
+}
+
 
 def _job_paths(data: Mapping[str, Any]) -> JobStoragePaths:
     job_id = data.get("job_id")
@@ -696,7 +703,7 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
     else:
         payload.pop("written_sections", None)
         tokens_total = tokens_total or _estimate_tokens(document_text)
-        publish_stage_event("REVIEW", "QUEUED", payload)
+        publish_stage_event(REVIEW_AGENT_STAGES["general"], "QUEUED", payload)
         send_queue_message(settings.sb_queue_review_general, _strip_review_payload(payload))
         publish_status(
             _stage_completed_event(
@@ -725,6 +732,7 @@ def _ensure_not_exhausted(cycle_state: CycleState, data: Mapping[str, Any], sett
 
 
 def process_review_general(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) -> None:
+    agent_stage = REVIEW_AGENT_STAGES["general"]
     settings = get_settings()
     renew_lock = data.get("_renew_lock")
     reviewer = reviewer or ReviewerAgent()
@@ -735,7 +743,7 @@ def process_review_general(data: Dict[str, Any], reviewer: ReviewerAgent | None 
     cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
     progress = _load_review_progress(job_paths, cycle_idx)
     if progress["general"].get("done"):
-        publish_stage_event("REVIEW", "QUEUED", data, extra={"message": "General review already complete; forwarding to style"})
+        publish_stage_event(agent_stage, "DONE", data, extra={"message": "General review already complete; forwarding to style"})
         send_queue_message(settings.sb_queue_review_style, _strip_review_payload(data))
         return
 
@@ -810,12 +818,12 @@ def process_review_general(data: Dict[str, Any], reviewer: ReviewerAgent | None 
                 remaining_after_batch = [sid for sid in ordered_section_ids if sid not in reviewed_sections]
                 if remaining_after_batch:
                     message = f"General review: {len(reviewed_sections)} of {len(ordered_section_ids)} sections (batch size {len(current_batch)})"
-                    publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
+                    publish_stage_event(agent_stage, "QUEUED", data, extra={"message": message})
                     _persist_review_progress(job_paths, cycle_idx, progress)
                     send_queue_message(settings.sb_queue_review_general, _strip_review_payload(data))
                     status_payload = StatusEvent(
                         job_id=data["job_id"],
-                        stage="REVIEW_IN_PROGRESS",
+                        stage=f"{agent_stage}_IN_PROGRESS",
                         ts=time.time(),
                         message=message,
                         cycle=cycle_idx,
@@ -841,11 +849,11 @@ def process_review_general(data: Dict[str, Any], reviewer: ReviewerAgent | None 
 
     _persist_review_progress(job_paths, cycle_idx, progress)
     message = "General review complete; queuing style reviewer"
-    publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
+    publish_stage_event(agent_stage, "DONE", data, extra={"message": message})
     send_queue_message(settings.sb_queue_review_style, _strip_review_payload(data))
     status_payload = StatusEvent(
         job_id=data["job_id"],
-        stage="REVIEW_IN_PROGRESS",
+        stage=f"{agent_stage}_DONE",
         ts=time.time(),
         message=message,
         cycle=cycle_idx,
@@ -886,6 +894,7 @@ def _accumulate_section_guidance(
 
 
 def process_review_style(data: Dict[str, Any], style_agent: StyleReviewerAgent | None = None) -> None:
+    agent_stage = REVIEW_AGENT_STAGES["style"]
     settings = get_settings()
     style_agent = style_agent or StyleReviewerAgent()
     cycle_state = ensure_cycle_state(data)
@@ -895,11 +904,11 @@ def process_review_style(data: Dict[str, Any], style_agent: StyleReviewerAgent |
     cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
     progress = _load_review_progress(job_paths, cycle_idx)
     if progress["style"].get("done"):
-        publish_stage_event("REVIEW", "QUEUED", data, extra={"message": "Style review already complete; forwarding to cohesion"})
+        publish_stage_event(agent_stage, "DONE", data, extra={"message": "Style review already complete; forwarding to cohesion"})
         send_queue_message(settings.sb_queue_review_cohesion, _strip_review_payload(data))
         return
 
-    publish_stage_event("REVIEW", "START", data, extra={"message": "Running style reviewer"})
+    publish_stage_event(agent_stage, "START", data, extra={"message": "Running style reviewer"})
     with stage_timer(job_id=data["job_id"], stage="REVIEW", cycle=cycle_idx, user_id=job_paths.user_id) as timing:
         store = BlobStore()
         draft = store.get_text(blob=data["out"])
@@ -965,12 +974,12 @@ def process_review_style(data: Dict[str, Any], style_agent: StyleReviewerAgent |
                 remaining_after_batch = [sid for sid in ordered_section_ids if sid not in set(progress["style"].get("sections_done", []))]
                 if remaining_after_batch:
                     message = f"Style review: {len(progress['style']['sections_done'])} of {len(ordered_section_ids)} sections (batch size {len(current_batch)})"
-                    publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
+                    publish_stage_event(agent_stage, "QUEUED", data, extra={"message": message})
                     _persist_review_progress(job_paths, cycle_idx, progress)
                     send_queue_message(settings.sb_queue_review_style, _strip_review_payload(data))
                     status_payload = StatusEvent(
                         job_id=data["job_id"],
-                        stage="REVIEW_IN_PROGRESS",
+                        stage=f"{agent_stage}_IN_PROGRESS",
                         ts=time.time(),
                         message=message,
                         cycle=cycle_idx,
@@ -990,11 +999,11 @@ def process_review_style(data: Dict[str, Any], style_agent: StyleReviewerAgent |
 
     _persist_review_progress(job_paths, cycle_idx, progress)
     message = "Style review complete; queuing cohesion reviewer"
-    publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
+    publish_stage_event(agent_stage, "DONE", data, extra={"message": message})
     send_queue_message(settings.sb_queue_review_cohesion, _strip_review_payload(data))
     status_payload = StatusEvent(
         job_id=data["job_id"],
-        stage="REVIEW_IN_PROGRESS",
+        stage=f"{agent_stage}_DONE",
         ts=time.time(),
         message=message,
         cycle=cycle_idx,
@@ -1004,6 +1013,7 @@ def process_review_style(data: Dict[str, Any], style_agent: StyleReviewerAgent |
 
 
 def process_review_cohesion(data: Dict[str, Any], cohesion_agent: CohesionReviewerAgent | None = None) -> None:
+    agent_stage = REVIEW_AGENT_STAGES["cohesion"]
     settings = get_settings()
     cohesion_agent = cohesion_agent or CohesionReviewerAgent()
     cycle_state = ensure_cycle_state(data)
@@ -1013,11 +1023,11 @@ def process_review_cohesion(data: Dict[str, Any], cohesion_agent: CohesionReview
     cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
     progress = _load_review_progress(job_paths, cycle_idx)
     if progress["cohesion"].get("done"):
-        publish_stage_event("REVIEW", "QUEUED", data, extra={"message": "Cohesion review already complete; forwarding to summary"})
+        publish_stage_event(agent_stage, "DONE", data, extra={"message": "Cohesion review already complete; forwarding to summary"})
         send_queue_message(settings.sb_queue_review_summary, _strip_review_payload(data))
         return
 
-    publish_stage_event("REVIEW", "START", data, extra={"message": "Running cohesion reviewer"})
+    publish_stage_event(agent_stage, "START", data, extra={"message": "Running cohesion reviewer"})
     with stage_timer(job_id=data["job_id"], stage="REVIEW", cycle=cycle_idx, user_id=job_paths.user_id) as timing:
         store = BlobStore()
         draft = store.get_text(blob=data["out"])
@@ -1081,12 +1091,12 @@ def process_review_cohesion(data: Dict[str, Any], cohesion_agent: CohesionReview
                 remaining_after_batch = [sid for sid in ordered_section_ids if sid not in set(progress["cohesion"].get("sections_done", []))]
                 if remaining_after_batch:
                     message = f"Cohesion review: {len(progress['cohesion']['sections_done'])} of {len(ordered_section_ids)} sections (batch size {len(current_batch)})"
-                    publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
+                    publish_stage_event(agent_stage, "QUEUED", data, extra={"message": message})
                     _persist_review_progress(job_paths, cycle_idx, progress)
                     send_queue_message(settings.sb_queue_review_cohesion, _strip_review_payload(data))
                     status_payload = StatusEvent(
                         job_id=data["job_id"],
-                        stage="REVIEW_IN_PROGRESS",
+                        stage=f"{agent_stage}_IN_PROGRESS",
                         ts=time.time(),
                         message=message,
                         cycle=cycle_idx,
@@ -1106,11 +1116,11 @@ def process_review_cohesion(data: Dict[str, Any], cohesion_agent: CohesionReview
 
     _persist_review_progress(job_paths, cycle_idx, progress)
     message = "Cohesion review complete; queuing summary reviewer"
-    publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
+    publish_stage_event(agent_stage, "DONE", data, extra={"message": message})
     send_queue_message(settings.sb_queue_review_summary, _strip_review_payload(data))
     status_payload = StatusEvent(
         job_id=data["job_id"],
-        stage="REVIEW_IN_PROGRESS",
+        stage=f"{agent_stage}_DONE",
         ts=time.time(),
         message=message,
         cycle=cycle_idx,
@@ -1120,6 +1130,7 @@ def process_review_cohesion(data: Dict[str, Any], cohesion_agent: CohesionReview
 
 
 def process_review_summary(data: Dict[str, Any], summary_agent: SummaryReviewerAgent | None = None) -> None:
+    agent_stage = REVIEW_AGENT_STAGES["summary"]
     settings = get_settings()
     summary_agent = summary_agent or SummaryReviewerAgent()
     cycle_state = ensure_cycle_state(data)
@@ -1129,7 +1140,7 @@ def process_review_summary(data: Dict[str, Any], summary_agent: SummaryReviewerA
     cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
     progress = _load_review_progress(job_paths, cycle_idx)
     if progress["summary"].get("done"):
-        publish_stage_event("VERIFY", "QUEUED", data, extra={"message": "Summary review already complete; forwarding to verify"})
+        publish_stage_event(agent_stage, "DONE", data, extra={"message": "Summary review already complete; forwarding to verify"})
         review_tokens = int(progress.get("tokens_total") or 0)
         publish_status(
             _stage_completed_event(
@@ -1145,7 +1156,7 @@ def process_review_summary(data: Dict[str, Any], summary_agent: SummaryReviewerA
         send_queue_message(settings.sb_queue_verify, _strip_review_payload(data))
         return
 
-    publish_stage_event("REVIEW", "START", data, extra={"message": "Running executive summary reviewer"})
+    publish_stage_event(agent_stage, "START", data, extra={"message": "Running executive summary reviewer"})
     with stage_timer(job_id=data["job_id"], stage="REVIEW", cycle=cycle_idx, user_id=job_paths.user_id) as timing:
         store = BlobStore()
         draft = store.get_text(blob=data["out"])
@@ -1213,12 +1224,12 @@ def process_review_summary(data: Dict[str, Any], summary_agent: SummaryReviewerA
                 remaining_after_batch = [sid for sid in ordered_section_ids if sid not in set(progress["summary"].get("sections_done", []))]
                 if remaining_after_batch:
                     message = f"Summary review: {len(progress['summary']['sections_done'])} of {len(ordered_section_ids)} sections (batch size {len(current_batch)})"
-                    publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
+                    publish_stage_event(agent_stage, "QUEUED", data, extra={"message": message})
                     _persist_review_progress(job_paths, cycle_idx, progress)
                     send_queue_message(settings.sb_queue_review_summary, _strip_review_payload(data))
                     status_payload = StatusEvent(
                         job_id=data["job_id"],
-                        stage="REVIEW_IN_PROGRESS",
+                        stage=f"{agent_stage}_IN_PROGRESS",
                         ts=time.time(),
                         message=message,
                         cycle=cycle_idx,
@@ -1254,7 +1265,7 @@ def process_review_summary(data: Dict[str, Any], summary_agent: SummaryReviewerA
 
     _persist_review_progress(job_paths, cycle_idx, progress)
     review_tokens = int(progress.get("tokens_total") or 0)
-    publish_stage_event("VERIFY", "QUEUED", data, extra={"message": "Summary review complete; queuing verify"})
+    publish_stage_event(agent_stage, "DONE", data, extra={"message": "Summary review complete; queuing verify"})
     send_queue_message(settings.sb_queue_verify, _strip_review_payload(data))
     publish_status(
         _stage_completed_event(
@@ -1522,7 +1533,7 @@ def process_rewrite(data: Dict[str, Any], writer: WriterAgent | None = None) -> 
     next_cycle_state.apply(payload)
     payload["requires_rewrite"] = False
     if next_cycle_state.completed < next_cycle_state.requested:
-        publish_stage_event("REVIEW", "QUEUED", payload)
+        publish_stage_event(REVIEW_AGENT_STAGES["general"], "QUEUED", payload)
         send_queue_message(settings.sb_queue_review_general, payload)
     else:
         publish_stage_event("DIAGRAM", "QUEUED", payload)

@@ -8,7 +8,8 @@ type TimelineStageDetailsProps = {
   message?: string;
   showMessage?: boolean;
   artifact?: string;
-  renderArtifactActions?: (artifact: string, size?: "sm" | "md") => ReactNode;
+  renderArtifactActions?: (artifact: string, size?: "sm" | "md", stageBase?: string) => ReactNode;
+  stageBase?: string;
   children?: ReactNode;
 };
 
@@ -20,6 +21,7 @@ export const TimelineStageDetails: FC<TimelineStageDetailsProps> = ({
   showMessage = false,
   artifact,
   renderArtifactActions,
+  stageBase,
   children,
 }) => (
   <div className="space-y-3 border-t border-slate-100 pt-3">
@@ -31,7 +33,7 @@ export const TimelineStageDetails: FC<TimelineStageDetailsProps> = ({
     ) : showMessage && message ? (
       <p className="text-xs text-slate-500">{message}</p>
     ) : null}
-    {artifact && renderArtifactActions ? renderArtifactActions(artifact, "sm") : null}
+    {artifact && renderArtifactActions ? renderArtifactActions(artifact, "sm", stageBase) : null}
     {children}
   </div>
 );

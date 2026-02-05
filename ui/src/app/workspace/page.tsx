@@ -29,6 +29,10 @@ const SUMMARY_STAGE_ORDER = [
   "INTAKE_RESUME",
   "PLAN",
   "WRITE",
+  "REVIEW_GENERAL",
+  "REVIEW_STYLE",
+  "REVIEW_COHESION",
+  "REVIEW_SUMMARY",
   "REVIEW",
   "VERIFY",
   "REWRITE",
@@ -221,6 +225,7 @@ export default function WorkspacePage() {
               const completed = stageUpper.startsWith("FINALIZE") || stageUpper === "FINALIZE_DONE";
               const errored = Boolean(doc.has_error || stageUpper.endsWith("_FAILED"));
               const normalizedStage = doc.stage ? normalizeStageName(stageUpper) : null;
+              const isFinalStage = normalizedStage === "FINALIZE";
               const stagePosition = normalizedStage ? SUMMARY_STAGE_ORDER.indexOf(normalizedStage) : -1;
               const stagePhase = determineEventPhase(doc.stage ? { stage: doc.stage } : undefined);
               const completedSteps = (() => {
@@ -278,7 +283,7 @@ export default function WorkspacePage() {
                         Download artifact
                       </button>
                     ) : null}
-                    {doc.artifact ? (
+                    {doc.artifact && isFinalStage ? (
                       <button
                         type="button"
                         className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400"

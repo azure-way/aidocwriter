@@ -55,6 +55,10 @@ const SUMMARY_STAGE_ORDER = [
   "INTAKE_RESUME",
   "PLAN",
   "WRITE",
+  "REVIEW_GENERAL",
+  "REVIEW_STYLE",
+  "REVIEW_COHESION",
+  "REVIEW_SUMMARY",
   "REVIEW",
   "VERIFY",
   "REWRITE",
@@ -606,7 +610,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
   );
 
   const renderArtifactActions = useCallback(
-    (path: string, size: "sm" | "md" = "md") => {
+    (path: string, size: "sm" | "md" = "md", stageBase?: string) => {
       const fileName = path.split("/").pop() ?? path;
       const chipClass =
         "flex items-center gap-2 rounded-full bg-white/70 px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm";
@@ -617,21 +621,28 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
       const containerClass = size === "sm" ? "mt-2 space-y-2 pl-2" : "mt-3 space-y-3";
       const hasMarkdown = fileName.toLowerCase().endsWith(".md");
       const basePath = hasMarkdown ? path.replace(/\.[^/.]+$/, "") : path;
+      const allowRichFormats = stageBase === "FINALIZE";
       const variants = hasMarkdown
         ? [
             { label: "Markdown", display: fileName, artifactPath: path },
-            {
-              label: "PDF",
-              display: fileName.replace(/\.md$/i, ".pdf"),
-              artifactPath: `${basePath}.pdf`,
-            },
-            {
-              label: "Word",
-              display: fileName.replace(/\.md$/i, ".docx"),
-              artifactPath: `${basePath}.docx`,
-            },
+            ...(allowRichFormats
+              ? [
+                  {
+                    label: "PDF",
+                    display: fileName.replace(/\.md$/i, ".pdf"),
+                    artifactPath: `${basePath}.pdf`,
+                  },
+                  {
+                    label: "Word",
+                    display: fileName.replace(/\.md$/i, ".docx"),
+                    artifactPath: `${basePath}.docx`,
+                  },
+                ]
+              : []),
           ]
         : [{ label: undefined, display: fileName, artifactPath: path }];
+
+      const showDiagramAssets = stageBase === "FINALIZE";
 
       return (
         <div className={containerClass}>
@@ -652,18 +663,20 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
               </div>
             </div>
           ))}
-          <div className="flex flex-wrap items-center gap-2">
-            <span className={chipClass}>Diagram assets</span>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                className={buttonClass}
-                onClick={() => downloadDiagramArchiveFile(jobId)}
-              >
-                Download ZIP
-              </button>
+          {showDiagramAssets ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={chipClass}>Diagram assets</span>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className={buttonClass}
+                  onClick={() => downloadDiagramArchiveFile(jobId)}
+                >
+                  Download ZIP
+                </button>
+              </div>
             </div>
-          </div>
+          ) : null}
         </div>
       );
     },
@@ -676,7 +689,9 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
     };
   }, [clearNotice]);
 
-  const artifactActions = status?.artifact ? renderArtifactActions(status.artifact) : null;
+  const artifactActions = status?.artifact
+    ? renderArtifactActions(status.artifact, "md", status.stage ? normalizeStageName(status.stage) : undefined)
+    : null;
   const statusMetadata = useMemo(() => {
     if (!status) return [];
     const pseudoEvent: TimelineEvent = {

@@ -21,7 +21,7 @@ type TimelineStageCardProps = {
   formatStage: (stage: string) => string;
   formatTimestamp: (ts?: number | string | null) => string;
   getMetadataEntries: (event: TimelineEvent) => MetadataEntry[];
-  renderArtifactActions: (path: string, size?: "sm" | "md") => ReactNode;
+  renderArtifactActions: (path: string, size?: "sm" | "md", stageBase?: string) => ReactNode;
   combinedReviewCycles: CombinedCycleDetail[];
   cycleDetailsByStage: Map<string, StageCycleDetail[]>;
   expandedSummaryStages: SummaryExpansionState;
@@ -141,6 +141,7 @@ export const TimelineStageCard: FC<TimelineStageCardProps> = ({
               showMessage={completed || active}
               artifact={event.artifact}
               renderArtifactActions={renderArtifactActions}
+              stageBase={stageBase}
             >
               {showCycles ? (
                 <>
@@ -348,6 +349,7 @@ export const TimelineStageCard: FC<TimelineStageCardProps> = ({
             showMessage={completed || active}
             artifact={event.artifact}
             renderArtifactActions={renderArtifactActions}
+            stageBase={stageBase}
           >
             {showCycles && totalCycles > 0 ? (
               <>

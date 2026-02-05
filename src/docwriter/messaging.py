@@ -130,7 +130,15 @@ class ServiceBusManager:
 
 
 
-_CYCLIC_STAGES: Set[str] = {"REVIEW", "VERIFY", "REWRITE"}
+_CYCLIC_STAGES: Set[str] = {
+    "REVIEW",
+    "REVIEW_GENERAL",
+    "REVIEW_STYLE",
+    "REVIEW_COHESION",
+    "REVIEW_SUMMARY",
+    "VERIFY",
+    "REWRITE",
+}
 _ALLOWED_STATUS_EXTRA_KEYS: Set[str] = {
     "artifact",
     "message",

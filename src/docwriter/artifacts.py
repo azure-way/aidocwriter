@@ -17,6 +17,9 @@ MERMAID_BLOCK_RE = re.compile(r"```mermaid\s+([\s\S]*?)```", re.IGNORECASE)
 IMAGE_PATTERN = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
 SLUG_INVALID_RE = re.compile(r"[^a-z0-9\- ]+", re.IGNORECASE)
 SLUG_SEP_RE = re.compile(r"[\s\-]+")
+INTERNAL_HREF_RE = re.compile(r'href="#([A-Za-z0-9_\-]+)"')
+ID_ATTR_RE = re.compile(r'id="([A-Za-z0-9_\-]+)"')
+NAME_ATTR_RE = re.compile(r'name="([A-Za-z0-9_\-]+)"')
 
 
 def replace_mermaid_with_images(
@@ -93,6 +96,7 @@ def export_pdf(
 
     html = re.sub(r'src="([^"]+)"', _replace_src, html)
     html = _wrap_html_for_pdf(html)
+    html = _ensure_internal_anchors(html)
     try:
         return HTML(string=html).write_pdf()
     except Exception:
@@ -242,6 +246,21 @@ def _wrap_html_for_pdf(html: str) -> str:
     </style>
     """
     return f"<!DOCTYPE html><html><head><meta charset='utf-8'/>{styles}</head><body>{html}</body></html>"
+
+
+def _ensure_internal_anchors(html: str) -> str:
+    """Add placeholder anchors for internal href targets that are missing IDs to avoid WeasyPrint errors."""
+    refs = set(INTERNAL_HREF_RE.findall(html))
+    if not refs:
+        return html
+    existing = set(ID_ATTR_RE.findall(html)) | set(NAME_ATTR_RE.findall(html))
+    missing = [ref for ref in refs if ref not in existing]
+    if not missing:
+        return html
+    placeholders = "".join(f'<div id="{ref}" aria-hidden="true"></div>' for ref in missing)
+    if "</body>" in html:
+        return html.replace("</body>", f"{placeholders}</body>", 1)
+    return f"{html}{placeholders}"
 
 
 def _resolve_image_bytes(

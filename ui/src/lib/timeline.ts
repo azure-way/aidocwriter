@@ -39,7 +39,15 @@ export type CombinedCycleDetail = {
   }>;
 };
 
-export const CYCLE_AWARE_STAGES = ["REVIEW", "VERIFY", "REWRITE"] as const;
+export const CYCLE_AWARE_STAGES = [
+  "REVIEW_GENERAL",
+  "REVIEW_STYLE",
+  "REVIEW_COHESION",
+  "REVIEW_SUMMARY",
+  "REVIEW",
+  "VERIFY",
+  "REWRITE",
+] as const;
 export const CYCLE_AWARE_STAGE_SET = new Set<string>(CYCLE_AWARE_STAGES);
 
 export const cycleStatusStyles: Record<StagePhase, { badge: string; container: string }> = {
