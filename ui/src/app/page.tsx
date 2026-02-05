@@ -69,7 +69,7 @@ export default function HomePage() {
             <dl className="mt-6 grid gap-6 text-white/80 sm:grid-cols-3">
               <div>
                 <dt className="text-xs uppercase tracking-[0.3em]">Avg. delivery speed</dt>
-                <dd className="mt-2 text-3xl font-semibold text-white">10 minutes</dd>
+                <dd className="mt-2 text-3xl font-semibold text-white">1 hour</dd>
               </div>
               <div>
                 <dt className="text-xs uppercase tracking-[0.3em]">Pages per document</dt>
@@ -80,6 +80,28 @@ export default function HomePage() {
                 <dd className="mt-2 text-3xl font-semibold text-white">10</dd>
               </div>
             </dl>
+            <div className="mt-6 space-y-4 rounded-3xl border border-white/20 bg-white/5 p-6 shadow-[0_30px_90px_rgba(15,23,42,0.35)]">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.35em] text-white/70">Licensing</p>
+                  <h3 className="text-xl font-semibold text-white">Free for individuals, licensed for companies</h3>
+                  <p className="mt-2 text-sm text-white/80">
+                    Solo builders, students, and individual contributors can use DocWriter Studio at no cost. Teams rolling out inside a company can add a
+                    paid license that includes enterprise support, SSO, and Azure tenancy alignment.
+                  </p>
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl bg-slate-900/60 p-5 text-white">
+                  <p className="text-sm font-semibold">Individual use</p>
+                  <p className="mt-1 text-xs text-white/75">Free to explore, draft, and ship personal deliverables.</p>
+                </div>
+                <div className="rounded-2xl bg-white text-slate-900 p-5 shadow-inner">
+                  <p className="text-sm font-semibold">Company use</p>
+                  <p className="mt-1 text-xs text-slate-700">Paid licensing with onboarding, governance, and SLA-backed support.</p>
+                </div>
+              </div>
+            </div>
           </div>
           <div className="space-y-6 rounded-3xl border border-white/20 bg-white/10 p-8">
             <p className="text-sm uppercase tracking-[0.35em] text-white/80">Benefits</p>

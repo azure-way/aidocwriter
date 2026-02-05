@@ -337,8 +337,16 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
   const getTokensFromEvent = useCallback(
     (event: TimelineEvent): number | null => {
       const parsed = extractParsedMessage(event);
+      const parsedDisplay = parsed?.tokens_display;
+      const fromDisplay =
+        typeof parsedDisplay === "string" && parsedDisplay.trim()
+          ? Number(parsedDisplay.replace(/,/g, ""))
+          : null;
       if (typeof parsed?.tokens === "number" && parsed.tokens > 0) {
         return parsed.tokens;
+      }
+      if (typeof fromDisplay === "number" && Number.isFinite(fromDisplay) && fromDisplay > 0) {
+        return fromDisplay;
       }
       if (typeof event.details?.tokens === "number" && event.details.tokens > 0) {
         return event.details.tokens;
@@ -348,31 +356,42 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
     [extractParsedMessage]
   );
 
-  const computeReviewDurationSeconds = useCallback((reviewEvents: TimelineEvent[]): number | null => {
-    if (!reviewEvents.length) return null;
-    const sorted = [...reviewEvents].sort((a, b) => Number(a.ts ?? 0) - Number(b.ts ?? 0));
+  const computeStageDurationSeconds = useCallback((stageBase: string, events: TimelineEvent[]): number | null => {
+    if (!events.length) return null;
+    const sorted = [...events].sort((a, b) => Number(a.ts ?? 0) - Number(b.ts ?? 0));
     const startEvent =
-      sorted.find((ev) => (ev.stage ?? "").startsWith("REVIEW_QUEUED")) ?? sorted[0];
+      sorted.find((ev) => (ev.stage ?? "").startsWith(`${stageBase}_QUEUED`)) ?? sorted[0];
     const endEvent =
-      [...sorted].reverse().find((ev) => (ev.stage ?? "").startsWith("REVIEW_DONE")) ??
-      [...sorted].reverse().find((ev) => (ev.stage ?? "").startsWith("REVIEW_IN_PROGRESS")) ??
+      [...sorted].reverse().find((ev) => (ev.stage ?? "").startsWith(`${stageBase}_DONE`)) ??
+      [...sorted].reverse().find((ev) => (ev.stage ?? "").startsWith(`${stageBase}_IN_PROGRESS`)) ??
       sorted[sorted.length - 1];
     const startTs = Number(startEvent?.ts);
     const endTs = Number(endEvent?.ts);
     if (Number.isFinite(startTs) && Number.isFinite(endTs) && endTs >= startTs) {
-      return endTs - startTs;
+        return endTs - startTs;
     }
     return null;
   }, []);
 
-  const applyReviewTokenAggregation = useCallback(
+  const applyStageAggregation = useCallback(
     (event: TimelineEvent, relatedEvents: TimelineEvent[]): TimelineEvent => {
-      if (normalizeStageName(event.stage ?? "") !== "REVIEW") {
+      const base = normalizeStageName(event.stage ?? "");
+      if (base !== "REVIEW" && base !== "WRITE") {
         return event;
       }
-      const reviewOnly = relatedEvents.filter((ev) => normalizeStageName(ev.stage ?? "") === "REVIEW");
-      const durationOverrideSeconds = computeReviewDurationSeconds(reviewOnly);
-      const tokensTotal = relatedEvents.reduce((acc, ev) => acc + (getTokensFromEvent(ev) ?? 0), 0);
+      const stageOnly = relatedEvents.filter((ev) => normalizeStageName(ev.stage ?? "") === base);
+      const durationOverrideSeconds = computeStageDurationSeconds(base, stageOnly);
+      const tokensTotal =
+        base === "WRITE"
+          ? (() => {
+              const completion = stageOnly.find((ev) => determineEventPhase(ev) === "complete");
+              const completionTokens = completion ? getTokensFromEvent(completion) : null;
+              if (typeof completionTokens === "number" && completionTokens > 0) {
+                return completionTokens;
+              }
+              return stageOnly.reduce((acc, ev) => acc + (getTokensFromEvent(ev) ?? 0), 0);
+            })()
+          : stageOnly.reduce((acc, ev) => acc + (getTokensFromEvent(ev) ?? 0), 0);
       const parsed = extractParsedMessage(event);
       const tokensDisplay = tokensTotal.toLocaleString();
       const nextDetails: Record<string, unknown> = { ...(event.details ?? {}) };
@@ -391,7 +410,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
       }
       return { ...event, details: nextDetails };
     },
-    [computeReviewDurationSeconds, extractParsedMessage, getTokensFromEvent]
+    [computeStageDurationSeconds, extractParsedMessage, getTokensFromEvent]
   );
 
   const summaryEvents = useMemo(() => {
@@ -421,7 +440,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
 
       const completionEvent = [...related].reverse().find((entry) => determineEventPhase(entry) === "complete");
       if (completionEvent) {
-        return applyReviewTokenAggregation(
+        return applyStageAggregation(
           {
             ...completionEvent,
             stage,
@@ -436,7 +455,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
 
       const inProgressEvent = [...related].reverse().find((entry) => determineEventPhase(entry) === "in_progress");
       if (inProgressEvent) {
-        return applyReviewTokenAggregation(
+        return applyStageAggregation(
           {
             ...inProgressEvent,
             stage,
@@ -451,7 +470,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
 
       const queuedEvent = [...related].reverse().find((entry) => determineEventPhase(entry) === "queued");
       if (queuedEvent) {
-        return applyReviewTokenAggregation(
+        return applyStageAggregation(
           {
             ...queuedEvent,
             stage,
@@ -464,7 +483,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
         );
       }
 
-      return applyReviewTokenAggregation(
+      return applyStageAggregation(
         {
           stage,
           message: `${formatStage(stage)} pending`,
@@ -475,7 +494,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
         related
       );
     });
-  }, [applyReviewTokenAggregation, formatStage, sortedTimeline, stageOrder]);
+  }, [applyStageAggregation, formatStage, sortedTimeline, stageOrder]);
 
   const summaryEventsToRender = useMemo(() => {
     return summaryEvents.filter((event) => {
@@ -770,10 +789,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
           null;
         let durationOverride: number | null = null;
         if (stageBase === "REVIEW") {
-          const reviewEvents = stageEvents.filter(
-            (ev) => normalizeStageName(ev.stage ?? "") === "REVIEW"
-          );
-          durationOverride = computeReviewDurationSeconds(reviewEvents);
+          durationOverride = computeStageDurationSeconds("REVIEW", stageEvents);
         }
 
         const metadataEntries = metadataSource ? getMetadataEntries(metadataSource, durationOverride) : [];

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Callable
 from uuid import uuid4
 
 from .config import get_settings
@@ -9,6 +9,7 @@ from .llm import LLMClient, LLMMessage
 from .messaging import publish_stage_event, send_queue_message
 from .storage import BlobStore, JobStoragePaths
 from .telemetry import track_exception
+from .plantuml_reference import PLANTUML_REFERENCE_TEXT
 
 
 class DiagramRenderError(RuntimeError):
@@ -76,6 +77,52 @@ def _get_reformat_client() -> LLMClient:
     return _reformat_llm_client
 
 
+def _regenerate_from_description(
+    diagram_id: str,
+    description: str | None,
+    diagram_type: str | None,
+    entities: List[str] | None,
+    relationships: List[str] | None,
+) -> Optional[str]:
+    """Attempt to rebuild PlantUML from a description when rendering failed twice."""
+    if not description:
+        return None
+    settings = get_settings()
+    client = _get_reformat_client()
+    sys = (
+        "You are a PlantUML fixer. Given a description and optional entities/relationships, produce a minimal,"
+        " valid PlantUML diagram. Do not return Markdown fences. Include exactly one @startuml and one @enduml."
+        " Prefer simple shapes and arrows that match the description. Keep labels short and on one line."
+    )
+    parts = [
+        f"Diagram id: {diagram_id}",
+        f"Description: {description}",
+    ]
+    if diagram_type:
+        parts.append(f"Diagram type hint: {diagram_type}")
+    if entities:
+        parts.append(f"Entities: {', '.join(entities)}")
+    if relationships:
+        parts.append(f"Relationships: {', '.join(relationships)}")
+    parts.append("PlantUML reference (use for syntax choices only):")
+    parts.append(PLANTUML_REFERENCE_TEXT)
+    prompt = "\n".join(parts)
+    try:
+        text = client.chat(
+            model=settings.writer_model,
+            messages=[LLMMessage("system", sys), LLMMessage("user", prompt)],
+            max_output_tokens=600,
+            temperature=0.2,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        track_exception(exc, {"stage": "DIAGRAM_RENDER", "operation": "regenerate_from_description"})
+        return None
+    try:
+        return _reformat_plantuml_text(text)
+    except Exception:
+        return None
+
+
 def _strip_code_fences(text: str) -> str:
     if "```" not in text:
         return text
@@ -121,7 +168,12 @@ def _reformat_plantuml_text(source: str | bytes) -> str:
         return normalized
 
 
-def _render_with_plantuml(source: str | bytes, fmt: str) -> bytes:
+def _render_with_plantuml(
+    source: str | bytes,
+    fmt: str,
+    *,
+    regen_after_second_failure: Optional[Callable[[], str | None]] = None,
+) -> bytes:
     import requests
 
     server_url = os.getenv("PLANTUML_SERVER_URL")
@@ -148,6 +200,17 @@ def _render_with_plantuml(source: str | bytes, fmt: str) -> bytes:
         except Exception as exc:  # pragma: no cover - defensive
             last_exc = exc
             track_exception(exc, {"stage": "DIAGRAM_RENDER", "attempt": str(attempt + 1)})
+            if regen_after_second_failure and attempt == 1:
+                try:
+                    regenerated = regen_after_second_failure()
+                    if regenerated:
+                        last_source = regenerated
+                        continue
+                except Exception as regen_exc:  # pragma: no cover - defensive
+                    track_exception(
+                        regen_exc,
+                        {"stage": "DIAGRAM_RENDER", "attempt": "regen_after_second_failure"},
+                    )
     track_exception(last_exc or Exception("PlantUML unknown failure"), {"stage": "DIAGRAM_RENDER"})
     raise DiagramRenderError(f"PlantUML rendering failed after 3 attempts: {last_exc}") from last_exc
 
@@ -166,6 +229,15 @@ def process_diagram_render(data: Dict[str, Any]) -> None:
     if "diagram_requests" in data:
         finalize_payload = data.get("finalize_payload") or {}
         code_blocks = finalize_payload.get("diagram_code_blocks") if isinstance(finalize_payload, dict) else {}
+        plan_specs = {}
+        try:
+            plan_specs = {
+                spec.get("diagram_id"): spec
+                for spec in (finalize_payload.get("plan") or {}).get("diagram_specs", [])
+                if isinstance(spec, dict) and spec.get("diagram_id")
+            }
+        except Exception:
+            plan_specs = {}
         requests = data.get("diagram_requests", [])
         if not isinstance(requests, list):
             raise DiagramRenderError("diagram_requests payload must be a list")
@@ -198,7 +270,16 @@ def process_diagram_render(data: Dict[str, Any]) -> None:
                 formatted_source = _reformat_plantuml_text(source_text)
                 if formatted_source != source_text:
                     store.put_text(source_path, formatted_source)
-                content = _render_with_plantuml(formatted_source, fmt)
+                spec = plan_specs.get(diag_id) or {}
+                regen_fn = None
+                description = spec.get("plantuml_prompt") or spec.get("description")
+                if description:
+                    entities = spec.get("entities") if isinstance(spec.get("entities"), list) else None
+                    relationships = spec.get("relationships") if isinstance(spec.get("relationships"), list) else None
+                    regen_fn = lambda desc=description, dtype=spec.get("diagram_type"), ent=entities, rel=relationships, did=diag_id: _regenerate_from_description(
+                        did, desc, dtype, ent, rel
+                    )
+                content = _render_with_plantuml(formatted_source, fmt, regen_after_second_failure=regen_fn)
                 store.put_bytes(blob=blob_path, data_bytes=content)
                 relative_path = blob_path
                 prefix = f"{job_paths.root}/"
@@ -224,22 +305,62 @@ def process_diagram_render(data: Dict[str, Any]) -> None:
             publish_stage_event("FINALIZE", "QUEUED", payload)
         except DiagramRenderError as exc:
             track_exception(exc, {"job_id": job_id, "stage": "DIAGRAM_RENDER"})
+            error_message = f"Diagram rendering failed: {exc}"
             publish_stage_event(
                 "DIAGRAM",
                 "FAILED",
                 {"job_id": job_id, "user_id": user_id},
-                extra={"message": f"Diagram rendering failed: {exc}"},
+                extra={"message": error_message},
             )
-            raise
+            try:
+                fallback_results = []
+                for request in requests:
+                    diag_id = request.get("diagram_id") or str(uuid4())
+                    fallback_results.append(
+                        {
+                            "diagram_id": diag_id,
+                            "code_block": code_blocks.get(diag_id) if isinstance(code_blocks, dict) else None,
+                            "alt_text": request.get("alt_text"),
+                            "error": error_message,
+                        }
+                    )
+                payload = {**finalize_payload, "diagram_results": fallback_results}
+                payload.setdefault("job_id", job_id)
+                payload.setdefault("user_id", user_id)
+                send_queue_message(settings.sb_queue_finalize_ready, payload)
+                publish_stage_event("FINALIZE", "QUEUED", payload)
+            except Exception as finalize_exc:  # pragma: no cover - defensive
+                track_exception(finalize_exc, {"job_id": job_id, "stage": "DIAGRAM_RENDER", "operation": "enqueue_finalize_after_failure"})
+            return
         except Exception as exc:  # pragma: no cover - defensive
             track_exception(exc, {"job_id": job_id, "stage": "DIAGRAM_RENDER"})
+            error_message = "Unexpected diagram rendering error"
             publish_stage_event(
                 "DIAGRAM",
                 "FAILED",
                 {"job_id": job_id, "user_id": user_id},
-                extra={"message": "Unexpected diagram rendering error"},
+                extra={"message": error_message},
             )
-            raise DiagramRenderError(f"unexpected rendering error: {exc}") from exc
+            try:
+                fallback_results = []
+                for request in requests:
+                    diag_id = request.get("diagram_id") or str(uuid4())
+                    fallback_results.append(
+                        {
+                            "diagram_id": diag_id,
+                            "code_block": code_blocks.get(diag_id) if isinstance(code_blocks, dict) else None,
+                            "alt_text": request.get("alt_text"),
+                            "error": f"{error_message}: {exc}",
+                        }
+                    )
+                payload = {**finalize_payload, "diagram_results": fallback_results}
+                payload.setdefault("job_id", job_id)
+                payload.setdefault("user_id", user_id)
+                send_queue_message(settings.sb_queue_finalize_ready, payload)
+                publish_stage_event("FINALIZE", "QUEUED", payload)
+            except Exception as finalize_exc:  # pragma: no cover - defensive
+                track_exception(finalize_exc, {"job_id": job_id, "stage": "DIAGRAM_RENDER", "operation": "enqueue_finalize_after_failure"})
+            return
         return
 
     source_path = data.get("source_path")
