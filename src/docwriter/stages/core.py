@@ -121,6 +121,82 @@ def _compose_section_batch(
     return batch_ids, batch_text
 
 
+def _dependency_stub(section_id: str, dependency_summaries: Mapping[str, str], id_to_section: Mapping[str, Mapping[str, Any]]) -> str:
+    summary = (dependency_summaries.get(str(section_id)) or "").strip()
+    title = (id_to_section.get(str(section_id)) or {}).get("title")
+    title_part = f" ({title})" if title else ""
+    if summary:
+        return f"Dependency {section_id}{title_part} summary:\\n{summary}"
+    return f"Dependency {section_id}{title_part} summary unavailable; refer to prior context."
+
+
+def _build_batch_context(
+    batch_ids: list[str],
+    sections: Mapping[str, str],
+    id_to_section: Mapping[str, Mapping[str, Any]],
+    dependency_summaries: Mapping[str, str],
+) -> tuple[str, list[str]]:
+    """Compose a combined markdown for a batch plus dependency stubs.
+
+    Returns the combined text and the ordered dependency ids included (excluding targets).
+    """
+    dep_ids: list[str] = []
+    seen_deps: set[str] = set()
+    for sid in batch_ids:
+        section = id_to_section.get(str(sid), {})
+        deps = section.get("dependencies", []) or []
+        for dep in deps:
+            dep_str = str(dep)
+            if dep_str in batch_ids or dep_str in seen_deps:
+                continue
+            dep_ids.append(dep_str)
+            seen_deps.add(dep_str)
+    dependency_parts = [_dependency_stub(dep, dependency_summaries, id_to_section) for dep in dep_ids]
+    batch_parts: list[str] = []
+    if dependency_parts:
+        batch_parts.append("\n\n".join(dependency_parts))
+    for sid in batch_ids:
+        section_text = sections.get(str(sid))
+        if section_text:
+            batch_parts.append(section_text)
+    combined_text = "\n\n".join(batch_parts)
+    return combined_text, dep_ids
+
+
+def _plan_review_batches(
+    ordered_section_ids: list[str],
+    completed_ids: set[str],
+    sections: Mapping[str, str],
+    id_to_section: Mapping[str, Mapping[str, Any]],
+    dependency_summaries: Mapping[str, str],
+    settings: Settings,
+) -> list[list[str]]:
+    """Greedy batching: group sections that share dependencies while staying under limits."""
+    max_batch = max(1, int(settings.review_batch_size or 1))
+    max_tokens = max(1, int(settings.review_max_prompt_tokens or 1))
+    remaining = [sid for sid in ordered_section_ids if sid not in completed_ids]
+    batches: list[list[str]] = []
+    current: list[str] = []
+
+    for sid in remaining:
+        candidate = current + [sid]
+        candidate_text, _ = _build_batch_context(candidate, sections, id_to_section, dependency_summaries)
+        candidate_tokens = _estimate_tokens(candidate_text)
+        over_tokens = candidate_tokens > max_tokens
+        over_size = len(candidate) > max_batch
+        if current and (over_tokens or over_size):
+            batches.append(current)
+            current = [sid]
+        else:
+            current = candidate
+        if len(current) >= max_batch:
+            batches.append(current)
+            current = []
+    if current:
+        batches.append(current)
+    return batches
+
+
 def _review_progress_path(job_paths: JobStoragePaths, cycle_idx: int) -> str:
     return job_paths.cycle(cycle_idx, "review_progress.json")
 
@@ -649,6 +725,7 @@ def _ensure_not_exhausted(cycle_state: CycleState, data: Mapping[str, Any], sett
 
 def process_review_general(data: Dict[str, Any], reviewer: ReviewerAgent | None = None) -> None:
     settings = get_settings()
+    renew_lock = data.get("_renew_lock")
     reviewer = reviewer or ReviewerAgent()
     cycle_state = ensure_cycle_state(data)
     job_paths = _job_paths(data)
@@ -669,7 +746,7 @@ def process_review_general(data: Dict[str, Any], reviewer: ReviewerAgent | None 
         id_to_section = {str(s.get("id")): s for s in (data.get("plan", {}).get("outline", []) or [])}
         ordered_section_ids = _ordered_section_ids(data.get("plan", {}), sections)
         reviewed_sections = {str(s) for s in progress["general"].get("sections_done", [])}
-        remaining_sections = [sid for sid in ordered_section_ids if sid not in reviewed_sections]
+        dependency_summaries = data.get("dependency_summaries", {}) or {}
 
         if not sections:
             review_json = reviewer.review(plan=data["plan"], draft_markdown=draft)
@@ -678,59 +755,89 @@ def process_review_general(data: Dict[str, Any], reviewer: ReviewerAgent | None 
             progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(reviewer.llm, "last_usage", None))
             progress["general"]["done"] = True
         else:
-            current_sid = remaining_sections[0]
-            _, batch_text = _compose_section_batch(current_sid, sections, id_to_section)
-            review_json = reviewer.review(plan=data["plan"], draft_markdown=batch_text)
-            try:
-                parsed = json.loads(review_json)
-            except Exception:
-                parsed = {}
-            accumulated = progress["general"].get("accumulated") or {
-                "findings": [],
-                "suggested_changes": [],
-                "revised_markdown": draft,
-            }
-            findings = accumulated.get("findings") or []
-            suggestions = accumulated.get("suggested_changes") or []
-            if isinstance(parsed, dict):
-                findings.extend(parsed.get("findings") or [])
-                suggestions.extend(parsed.get("suggested_changes") or [])
-                revised_chunk = parsed.get("revised_markdown")
-                if isinstance(revised_chunk, str) and revised_chunk.strip():
-                    accumulated["revised_markdown"] = merge_revised_markdown(
-                        accumulated.get("revised_markdown") or draft, revised_chunk
-                    )
-            accumulated["findings"] = findings
-            accumulated["suggested_changes"] = suggestions
-            progress["general"]["accumulated"] = accumulated
-            reviewed_sections.update([current_sid])
-            progress["general"]["sections_done"] = sorted(reviewed_sections)
-            progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(reviewer.llm, "last_usage", None))
-            remaining_after_batch = [sid for sid in ordered_section_ids if sid not in reviewed_sections]
-            if remaining_after_batch:
-                message = f"General review: {len(reviewed_sections)} of {len(ordered_section_ids)} sections (current {current_sid})"
-                publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
-                _persist_review_progress(job_paths, cycle_idx, progress)
-                send_queue_message(settings.sb_queue_review_general, _strip_review_payload(data))
-                status_payload = StatusEvent(
-                    job_id=data["job_id"],
-                    stage="REVIEW_IN_PROGRESS",
-                    ts=time.time(),
-                    message=message,
-                    cycle=cycle_idx,
-                    extra={
-                        "details": {
-                            "agent": "general",
-                            "completed_sections": list(reviewed_sections),
-                            "remaining_sections": remaining_after_batch,
-                        }
-                    },
-                ).to_payload()
-                publish_status(status_payload)
-                return
-            final_review_json = json.dumps(progress["general"]["accumulated"], ensure_ascii=False)
-            store.put_text(blob=job_paths.cycle(cycle_idx, "review.json"), text=final_review_json)
-            progress["general"]["done"] = True
+            batches = _plan_review_batches(ordered_section_ids, reviewed_sections, sections, id_to_section, dependency_summaries, settings)
+            if not batches:
+                progress["general"]["done"] = True
+            else:
+                current_batch = batches[0]
+                batch_text, dep_ids = _build_batch_context(current_batch, sections, id_to_section, dependency_summaries)
+                logger.info(
+                    "General review batch for job %s: targets=%s deps=%s est_tokens=%s",
+                    data.get("job_id"),
+                    current_batch,
+                    dep_ids,
+                    _estimate_tokens(batch_text),
+                )
+                section_meta = [
+                    {"section_id": sid, "title": (id_to_section.get(sid) or {}).get("title")} for sid in current_batch
+                ]
+                review_json = reviewer.review_batch(plan=data["plan"], markdown=batch_text, sections=section_meta)
+                try:
+                    parsed = json.loads(review_json)
+                except Exception:
+                    parsed = {}
+                accumulated = progress["general"].get("accumulated") or {
+                    "findings": [],
+                    "suggested_changes": [],
+                    "revised_markdown": draft,
+                }
+                accumulated.setdefault("revised_markdown", draft)
+                findings = accumulated.get("findings") or []
+                suggestions = accumulated.get("suggested_changes") or []
+                entries = parsed.get("sections") if isinstance(parsed, Mapping) else []
+                if isinstance(entries, list):
+                    for entry in entries:
+                        if not isinstance(entry, Mapping):
+                            continue
+                        findings.extend(entry.get("findings") or [])
+                        suggestions.extend(entry.get("suggested_changes") or [])
+                        revised_chunk = entry.get("revised_markdown")
+                        if isinstance(revised_chunk, str) and revised_chunk.strip():
+                            accumulated["revised_markdown"] = merge_revised_markdown(
+                                accumulated.get("revised_markdown") or draft, revised_chunk
+                            )
+                        sid = entry.get("section_id")
+                        if sid is not None:
+                            reviewed_sections.add(str(sid))
+                if not entries:
+                    reviewed_sections.update(current_batch)
+                accumulated["findings"] = findings
+                accumulated["suggested_changes"] = suggestions
+                progress["general"]["accumulated"] = accumulated
+                progress["general"]["sections_done"] = sorted(reviewed_sections)
+                progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(reviewer.llm, "last_usage", None))
+                remaining_after_batch = [sid for sid in ordered_section_ids if sid not in reviewed_sections]
+                if remaining_after_batch:
+                    message = f"General review: {len(reviewed_sections)} of {len(ordered_section_ids)} sections (batch size {len(current_batch)})"
+                    publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
+                    _persist_review_progress(job_paths, cycle_idx, progress)
+                    send_queue_message(settings.sb_queue_review_general, _strip_review_payload(data))
+                    status_payload = StatusEvent(
+                        job_id=data["job_id"],
+                        stage="REVIEW_IN_PROGRESS",
+                        ts=time.time(),
+                        message=message,
+                        cycle=cycle_idx,
+                        extra={
+                            "details": {
+                                "agent": "general",
+                                "completed_sections": list(reviewed_sections),
+                                "remaining_sections": remaining_after_batch,
+                            }
+                        },
+                    ).to_payload()
+                    publish_status(status_payload)
+                    return
+                final_review_json = json.dumps(progress[\"general\"].get(\"accumulated\", {}), ensure_ascii=False)
+                store.put_text(blob=job_paths.cycle(cycle_idx, \"review.json\"), text=final_review_json)
+                progress[\"general\"][\"done\"] = True
+
+    try:
+        if renew_lock:
+            renew_lock()
+    except Exception as exc:
+        track_exception(exc, {"job_id": data["job_id"], "stage": "REVIEW", "action": "renew_lock"})
+
     _persist_review_progress(job_paths, cycle_idx, progress)
     message = "General review complete; queuing style reviewer"
     publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
@@ -799,7 +906,7 @@ def process_review_style(data: Dict[str, Any], style_agent: StyleReviewerAgent |
         id_to_section = {str(s.get("id")): s for s in (data.get("plan", {}).get("outline", []) or [])}
         ordered_section_ids = _ordered_section_ids(data.get("plan", {}), sections)
         reviewed_sections = {str(s) for s in progress["style"].get("sections_done", [])}
-        remaining_sections = [sid for sid in ordered_section_ids if sid not in reviewed_sections]
+        dependency_summaries = data.get("dependency_summaries", {}) or {}
 
         if not sections:
             style_json = style_agent.review_style(plan=data["plan"], markdown=draft)
@@ -808,48 +915,74 @@ def process_review_style(data: Dict[str, Any], style_agent: StyleReviewerAgent |
             progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(style_agent.llm, "last_usage", None))
             progress["style"]["done"] = True
         else:
-            current_sid = remaining_sections[0]
-            _, batch_text = _compose_section_batch(current_sid, sections, id_to_section)
-            style_json = style_agent.review_style(plan=data["plan"], markdown=batch_text)
-            try:
-                parsed = json.loads(style_json)
-            except Exception:
-                parsed = {}
-            issues = parsed.get("issues") if isinstance(parsed, dict) else []
-            suggestions = parsed.get("suggestions") if isinstance(parsed, dict) else []
-            revised_snippets = parsed.get("revised_snippets") if isinstance(parsed, dict) else None
-            progress = _accumulate_section_guidance(
-                progress,
-                "style",
-                current_sid,
-                id_to_section.get(current_sid, {}).get("title"),
-                issues or [],
-                suggestions or [],
-                {"revised_snippets": revised_snippets} if revised_snippets else {},
-            )
-            progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(style_agent.llm, "last_usage", None))
-            remaining_after_batch = [sid for sid in ordered_section_ids if sid not in set(progress["style"].get("sections_done", []))]
-            if remaining_after_batch:
-                message = f"Style review: {len(progress['style']['sections_done'])} of {len(ordered_section_ids)} sections (current {current_sid})"
-                publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
-                _persist_review_progress(job_paths, cycle_idx, progress)
-                send_queue_message(settings.sb_queue_review_style, _strip_review_payload(data))
-                status_payload = StatusEvent(
-                    job_id=data["job_id"],
-                    stage="REVIEW_IN_PROGRESS",
-                    ts=time.time(),
-                    message=message,
-                    cycle=cycle_idx,
-                    extra={
-                        "details": {
-                            "agent": "style",
-                            "completed_sections": progress["style"]["sections_done"],
-                            "remaining_sections": remaining_after_batch,
-                        }
-                    },
-                ).to_payload()
-                publish_status(status_payload)
-                return
+            batches = _plan_review_batches(ordered_section_ids, reviewed_sections, sections, id_to_section, dependency_summaries, settings)
+            if not batches:
+                progress["style"]["done"] = True
+            else:
+                current_batch = batches[0]
+                batch_text, dep_ids = _build_batch_context(current_batch, sections, id_to_section, dependency_summaries)
+                logger.info(
+                    "Style review batch for job %s: targets=%s deps=%s est_tokens=%s",
+                    data.get("job_id"),
+                    current_batch,
+                    dep_ids,
+                    _estimate_tokens(batch_text),
+                )
+                section_meta = [
+                    {"section_id": sid, "title": (id_to_section.get(sid) or {}).get("title")} for sid in current_batch
+                ]
+                style_json = style_agent.review_style_batch(plan=data["plan"], markdown=batch_text, sections=section_meta)
+                try:
+                    parsed = json.loads(style_json)
+                except Exception:
+                    parsed = {}
+                entries = parsed.get("sections") if isinstance(parsed, Mapping) else []
+                if isinstance(entries, list):
+                    for entry in entries:
+                        if not isinstance(entry, Mapping):
+                            continue
+                        issues = entry.get("issues") if isinstance(entry.get("issues"), list) else []
+                        suggestions = entry.get("suggestions") if isinstance(entry.get("suggestions"), list) else []
+                        revised_snippets = entry.get("revised_snippets")
+                        sid = str(entry.get("section_id")) if entry.get("section_id") is not None else None
+                        if sid:
+                            progress = _accumulate_section_guidance(
+                                progress,
+                                "style",
+                                sid,
+                                id_to_section.get(sid, {}).get("title"),
+                                issues,
+                                suggestions,
+                                {"revised_snippets": revised_snippets} if revised_snippets else {},
+                            )
+                if not entries:
+                    for sid in current_batch:
+                        progress = _accumulate_section_guidance(
+                            progress, "style", sid, id_to_section.get(sid, {}).get("title"), [], []
+                        )
+                progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(style_agent.llm, "last_usage", None))
+                remaining_after_batch = [sid for sid in ordered_section_ids if sid not in set(progress["style"].get("sections_done", []))]
+                if remaining_after_batch:
+                    message = f"Style review: {len(progress['style']['sections_done'])} of {len(ordered_section_ids)} sections (batch size {len(current_batch)})"
+                    publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
+                    _persist_review_progress(job_paths, cycle_idx, progress)
+                    send_queue_message(settings.sb_queue_review_style, _strip_review_payload(data))
+                    status_payload = StatusEvent(
+                        job_id=data["job_id"],
+                        stage="REVIEW_IN_PROGRESS",
+                        ts=time.time(),
+                        message=message,
+                        cycle=cycle_idx,
+                        extra={
+                            "details": {
+                                "agent": "style",
+                                "completed_sections": progress["style"]["sections_done"],
+                                "remaining_sections": remaining_after_batch,
+                            }
+                        },
+                    ).to_payload()
+                    publish_status(status_payload)
+                    return
             final_style_json = json.dumps(progress["style"]["accumulated"], ensure_ascii=False)
             store.put_text(blob=job_paths.cycle(cycle_idx, "style.json"), text=final_style_json)
             progress["style"]["done"] = True
@@ -891,7 +1024,7 @@ def process_review_cohesion(data: Dict[str, Any], cohesion_agent: CohesionReview
         id_to_section = {str(s.get("id")): s for s in (data.get("plan", {}).get("outline", []) or [])}
         ordered_section_ids = _ordered_section_ids(data.get("plan", {}), sections)
         reviewed_sections = {str(s) for s in progress["cohesion"].get("sections_done", [])}
-        remaining_sections = [sid for sid in ordered_section_ids if sid not in reviewed_sections]
+        dependency_summaries = data.get("dependency_summaries", {}) or {}
 
         if not sections:
             cohesion_json = cohesion_agent.review_cohesion(plan=data["plan"], markdown=draft)
@@ -900,46 +1033,72 @@ def process_review_cohesion(data: Dict[str, Any], cohesion_agent: CohesionReview
             progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(cohesion_agent.llm, "last_usage", None))
             progress["cohesion"]["done"] = True
         else:
-            current_sid = remaining_sections[0]
-            _, batch_text = _compose_section_batch(current_sid, sections, id_to_section)
-            cohesion_json = cohesion_agent.review_cohesion(plan=data["plan"], markdown=batch_text)
-            try:
-                parsed = json.loads(cohesion_json)
-            except Exception:
-                parsed = {}
-            issues = parsed.get("issues") if isinstance(parsed, dict) else []
-            suggestions = parsed.get("suggestions") if isinstance(parsed, dict) else []
-            progress = _accumulate_section_guidance(
-                progress,
-                "cohesion",
-                current_sid,
-                id_to_section.get(current_sid, {}).get("title"),
-                issues or [],
-                suggestions or [],
-            )
-            progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(cohesion_agent.llm, "last_usage", None))
-            remaining_after_batch = [sid for sid in ordered_section_ids if sid not in set(progress["cohesion"].get("sections_done", []))]
-            if remaining_after_batch:
-                message = f"Cohesion review: {len(progress['cohesion']['sections_done'])} of {len(ordered_section_ids)} sections (current {current_sid})"
-                publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
-                _persist_review_progress(job_paths, cycle_idx, progress)
-                send_queue_message(settings.sb_queue_review_cohesion, _strip_review_payload(data))
-                status_payload = StatusEvent(
-                    job_id=data["job_id"],
-                    stage="REVIEW_IN_PROGRESS",
-                    ts=time.time(),
-                    message=message,
-                    cycle=cycle_idx,
-                    extra={
-                        "details": {
-                            "agent": "cohesion",
-                            "completed_sections": progress["cohesion"]["sections_done"],
-                            "remaining_sections": remaining_after_batch,
-                        }
-                    },
-                ).to_payload()
-                publish_status(status_payload)
-                return
+            batches = _plan_review_batches(ordered_section_ids, reviewed_sections, sections, id_to_section, dependency_summaries, settings)
+            if not batches:
+                progress["cohesion"]["done"] = True
+            else:
+                current_batch = batches[0]
+                batch_text, dep_ids = _build_batch_context(current_batch, sections, id_to_section, dependency_summaries)
+                logger.info(
+                    "Cohesion review batch for job %s: targets=%s deps=%s est_tokens=%s",
+                    data.get("job_id"),
+                    current_batch,
+                    dep_ids,
+                    _estimate_tokens(batch_text),
+                )
+                section_meta = [
+                    {"section_id": sid, "title": (id_to_section.get(sid) or {}).get("title")} for sid in current_batch
+                ]
+                cohesion_json = cohesion_agent.review_cohesion_batch(plan=data["plan"], markdown=batch_text, sections=section_meta)
+                try:
+                    parsed = json.loads(cohesion_json)
+                except Exception:
+                    parsed = {}
+                entries = parsed.get("sections") if isinstance(parsed, Mapping) else []
+                if isinstance(entries, list):
+                    for entry in entries:
+                        if not isinstance(entry, Mapping):
+                            continue
+                        issues = entry.get("issues") if isinstance(entry.get("issues"), list) else []
+                        suggestions = entry.get("suggestions") if isinstance(entry.get("suggestions"), list) else []
+                        sid = str(entry.get("section_id")) if entry.get("section_id") is not None else None
+                        if sid:
+                            progress = _accumulate_section_guidance(
+                                progress,
+                                "cohesion",
+                                sid,
+                                id_to_section.get(sid, {}).get("title"),
+                                issues,
+                                suggestions,
+                            )
+                if not entries:
+                    for sid in current_batch:
+                        progress = _accumulate_section_guidance(
+                            progress, "cohesion", sid, id_to_section.get(sid, {}).get("title"), [], []
+                        )
+                progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(cohesion_agent.llm, "last_usage", None))
+                remaining_after_batch = [sid for sid in ordered_section_ids if sid not in set(progress["cohesion"].get("sections_done", []))]
+                if remaining_after_batch:
+                    message = f"Cohesion review: {len(progress['cohesion']['sections_done'])} of {len(ordered_section_ids)} sections (batch size {len(current_batch)})"
+                    publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
+                    _persist_review_progress(job_paths, cycle_idx, progress)
+                    send_queue_message(settings.sb_queue_review_cohesion, _strip_review_payload(data))
+                    status_payload = StatusEvent(
+                        job_id=data["job_id"],
+                        stage="REVIEW_IN_PROGRESS",
+                        ts=time.time(),
+                        message=message,
+                        cycle=cycle_idx,
+                        extra={
+                            "details": {
+                                "agent": "cohesion",
+                                "completed_sections": progress["cohesion"]["sections_done"],
+                                "remaining_sections": remaining_after_batch,
+                            }
+                        },
+                    ).to_payload()
+                    publish_status(status_payload)
+                    return
             final_cohesion_json = json.dumps(progress["cohesion"]["accumulated"], ensure_ascii=False)
             store.put_text(blob=job_paths.cycle(cycle_idx, "cohesion.json"), text=final_cohesion_json)
             progress["cohesion"]["done"] = True
@@ -993,7 +1152,7 @@ def process_review_summary(data: Dict[str, Any], summary_agent: SummaryReviewerA
         id_to_section = {str(s.get("id")): s for s in (data.get("plan", {}).get("outline", []) or [])}
         ordered_section_ids = _ordered_section_ids(data.get("plan", {}), sections)
         reviewed_sections = {str(s) for s in progress["summary"].get("sections_done", [])}
-        remaining_sections = [sid for sid in ordered_section_ids if sid not in reviewed_sections]
+        dependency_summaries = data.get("dependency_summaries", {}) or {}
 
         if not sections:
             summary_json = summary_agent.review_executive_summary(plan=data["plan"], markdown=draft)
@@ -1002,48 +1161,76 @@ def process_review_summary(data: Dict[str, Any], summary_agent: SummaryReviewerA
             progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(summary_agent.llm, "last_usage", None))
             progress["summary"]["done"] = True
         else:
-            current_sid = remaining_sections[0]
-            _, batch_text = _compose_section_batch(current_sid, sections, id_to_section)
-            summary_json = summary_agent.review_executive_summary(plan=data["plan"], markdown=batch_text)
-            try:
-                parsed = json.loads(summary_json)
-            except Exception:
-                parsed = {}
-            issues = parsed.get("issues") if isinstance(parsed, dict) else []
-            suggestions = parsed.get("suggestions") if isinstance(parsed, dict) else []
-            section_summary = parsed.get("summary") if isinstance(parsed, dict) else None
-            progress = _accumulate_section_guidance(
-                progress,
-                "summary",
-                current_sid,
-                id_to_section.get(current_sid, {}).get("title"),
-                issues or [],
-                suggestions or [],
-                {"summary": section_summary} if section_summary else {},
-            )
-            progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(summary_agent.llm, "last_usage", None))
-            remaining_after_batch = [sid for sid in ordered_section_ids if sid not in set(progress["summary"].get("sections_done", []))]
-            if remaining_after_batch:
-                message = f"Summary review: {len(progress['summary']['sections_done'])} of {len(ordered_section_ids)} sections (current {current_sid})"
-                publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
-                _persist_review_progress(job_paths, cycle_idx, progress)
-                send_queue_message(settings.sb_queue_review_summary, _strip_review_payload(data))
-                status_payload = StatusEvent(
-                    job_id=data["job_id"],
-                    stage="REVIEW_IN_PROGRESS",
-                    ts=time.time(),
-                    message=message,
-                    cycle=cycle_idx,
-                    extra={
-                        "details": {
-                            "agent": "summary",
-                            "completed_sections": progress["summary"]["sections_done"],
-                            "remaining_sections": remaining_after_batch,
-                        }
-                    },
-                ).to_payload()
-                publish_status(status_payload)
-                return
+            batches = _plan_review_batches(ordered_section_ids, reviewed_sections, sections, id_to_section, dependency_summaries, settings)
+            if not batches:
+                progress["summary"]["done"] = True
+            else:
+                current_batch = batches[0]
+                batch_text, dep_ids = _build_batch_context(current_batch, sections, id_to_section, dependency_summaries)
+                logger.info(
+                    "Summary review batch for job %s: targets=%s deps=%s est_tokens=%s",
+                    data.get("job_id"),
+                    current_batch,
+                    dep_ids,
+                    _estimate_tokens(batch_text),
+                )
+                section_meta = [
+                    {"section_id": sid, "title": (id_to_section.get(sid) or {}).get("title")} for sid in current_batch
+                ]
+                summary_json = summary_agent.review_executive_summary_batch(
+                    plan=data["plan"], markdown=batch_text, sections=section_meta
+                )
+                try:
+                    parsed = json.loads(summary_json)
+                except Exception:
+                    parsed = {}
+                entries = parsed.get("sections") if isinstance(parsed, Mapping) else []
+                if isinstance(entries, list):
+                    for entry in entries:
+                        if not isinstance(entry, Mapping):
+                            continue
+                        issues = entry.get("issues") if isinstance(entry.get("issues"), list) else []
+                        suggestions = entry.get("suggestions") if isinstance(entry.get("suggestions"), list) else []
+                        section_summary = entry.get("summary") if isinstance(entry.get("summary"), str) else None
+                        sid = str(entry.get("section_id")) if entry.get("section_id") is not None else None
+                        if sid:
+                            progress = _accumulate_section_guidance(
+                                progress,
+                                "summary",
+                                sid,
+                                id_to_section.get(sid, {}).get("title"),
+                                issues,
+                                suggestions,
+                                {"summary": section_summary} if section_summary else {},
+                            )
+                if not entries:
+                    for sid in current_batch:
+                        progress = _accumulate_section_guidance(
+                            progress, "summary", sid, id_to_section.get(sid, {}).get("title"), [], []
+                        )
+                progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(summary_agent.llm, "last_usage", None))
+                remaining_after_batch = [sid for sid in ordered_section_ids if sid not in set(progress["summary"].get("sections_done", []))]
+                if remaining_after_batch:
+                    message = f"Summary review: {len(progress['summary']['sections_done'])} of {len(ordered_section_ids)} sections (batch size {len(current_batch)})"
+                    publish_stage_event("REVIEW", "QUEUED", data, extra={"message": message})
+                    _persist_review_progress(job_paths, cycle_idx, progress)
+                    send_queue_message(settings.sb_queue_review_summary, _strip_review_payload(data))
+                    status_payload = StatusEvent(
+                        job_id=data["job_id"],
+                        stage="REVIEW_IN_PROGRESS",
+                        ts=time.time(),
+                        message=message,
+                        cycle=cycle_idx,
+                        extra={
+                            "details": {
+                                "agent": "summary",
+                                "completed_sections": progress["summary"]["sections_done"],
+                                "remaining_sections": remaining_after_batch,
+                            }
+                        },
+                    ).to_payload()
+                    publish_status(status_payload)
+                    return
             sections_entries = progress["summary"]["accumulated"].get("sections", []) if isinstance(progress["summary"].get("accumulated"), dict) else []
             combined_summary_parts: list[str] = []
             for entry in sections_entries:

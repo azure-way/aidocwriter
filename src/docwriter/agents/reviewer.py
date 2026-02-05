@@ -40,3 +40,28 @@ class ReviewerAgent:
         if isinstance(content, str):
             return content
         return "{}"
+
+    def review_batch(self, plan: Dict[str, Any], markdown: str, sections: list[Dict[str, Any]]) -> str:
+        sys = (
+            "You are a critical reviewer. Check for contradictions, inconsistencies, missing definitions,"
+            " and propose revisions for each section independently."
+        )
+        guide = (
+            "Return JSON with keys: sections (array of objects) and overall_notes (optional)."
+            " Each sections item: {section_id, findings: [], suggested_changes: [], revised_markdown: string}."
+            " revised_markdown should include only the sections you adjusted, preserving any markers"
+            " like '<!-- SECTION:ID:START -->' and '<!-- SECTION:ID:END -->'."
+        )
+        sections_summary = ", ".join([str(s.get("section_id")) for s in sections]) if sections else ""
+        plan_summary = str({k: plan.get(k) for k in ["title", "audience", "glossary", "global_style"]})
+        content = self.llm.chat(
+            model=self.settings.reviewer_model,
+            messages=[
+                LLMMessage("system", sys),
+                LLMMessage("user", f"Plan: {plan_summary}"),
+                LLMMessage("user", f"Target sections: {sections_summary}"),
+                LLMMessage("user", f"Draft Markdown begins:\\n{markdown}"),
+                LLMMessage("user", guide),
+            ],
+        )
+        return content if isinstance(content, str) else "{}"

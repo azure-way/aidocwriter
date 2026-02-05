@@ -123,13 +123,41 @@ def test_e2e_local_pipeline(monkeypatch):
         # Review / verify loop until finalized
         review_payload = payload
         while True:
-            process_review_general(review_payload)
+            # General review may re-queue until all sections processed
+            while True:
+                process_review_general(review_payload)
+                next_general = try_pop_payload(settings.sb_queue_review_general)
+                if next_general:
+                    review_payload = next_general
+                    continue
+                break
+
             style_payload = pop_payload(settings.sb_queue_review_style)
-            process_review_style(style_payload)
+            while True:
+                process_review_style(style_payload)
+                next_style = try_pop_payload(settings.sb_queue_review_style)
+                if next_style:
+                    style_payload = next_style
+                    continue
+                break
+
             cohesion_payload = pop_payload(settings.sb_queue_review_cohesion)
-            process_review_cohesion(cohesion_payload)
+            while True:
+                process_review_cohesion(cohesion_payload)
+                next_cohesion = try_pop_payload(settings.sb_queue_review_cohesion)
+                if next_cohesion:
+                    cohesion_payload = next_cohesion
+                    continue
+                break
+
             summary_payload = pop_payload(settings.sb_queue_review_summary)
-            process_review_summary(summary_payload)
+            while True:
+                process_review_summary(summary_payload)
+                next_summary = try_pop_payload(settings.sb_queue_review_summary)
+                if next_summary:
+                    summary_payload = next_summary
+                    continue
+                break
             print("[REVIEW] General/style/cohesion/summary reviews completed")
             verify_payload = pop_payload(settings.sb_queue_verify)
             process_verify(verify_payload)

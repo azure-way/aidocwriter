@@ -28,3 +28,23 @@ class CohesionReviewerAgent:
             ],
         )
         return content if isinstance(content, str) else "{}"
+
+    def review_cohesion_batch(self, plan: dict, markdown: str, sections: list[dict]) -> str:
+        sys = (
+            "You are a cohesion editor. Assess flow, transitions, cross-references, and alignment for each section independently."
+            " Return per-section findings."
+        )
+        guide = (
+            "Return JSON with key 'sections' (array). Each item: {section_id, issues: [], suggestions: []}."
+        )
+        content = self.llm.chat(
+            model=self.settings.reviewer_model,
+            messages=[
+                LLMMessage("system", sys),
+                LLMMessage("user", f"Outline: {plan.get('outline', [])}"),
+                LLMMessage("user", f"Target sections: {', '.join([str(s.get('section_id')) for s in sections])}"),
+                LLMMessage("user", markdown),
+                LLMMessage("user", guide),
+            ],
+        )
+        return content if isinstance(content, str) else "{}"

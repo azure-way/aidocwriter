@@ -28,3 +28,22 @@ class SummaryReviewerAgent:
             ],
         )
         return content if isinstance(content, str) else "{}"
+
+    def review_executive_summary_batch(self, plan: dict, markdown: str, sections: list[dict]) -> str:
+        sys = (
+            "You are an executive editor. Produce or assess an executive summary for each section and capture per-section issues."
+        )
+        guide = (
+            "Return JSON with key 'sections' (array). Each item: {section_id, summary: string, issues: [], suggestions: []}."
+        )
+        content = self.llm.chat(
+            model=self.settings.reviewer_model,
+            messages=[
+                LLMMessage("system", sys),
+                LLMMessage("user", f"Title: {plan.get('title')} Audience: {plan.get('audience')}"),
+                LLMMessage("user", f"Target sections: {', '.join([str(s.get('section_id')) for s in sections])}"),
+                LLMMessage("user", markdown),
+                LLMMessage("user", guide),
+            ],
+        )
+        return content if isinstance(content, str) else "{}"

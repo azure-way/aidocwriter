@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import inspect
 import json
+import logging
 from dataclasses import dataclass
-from typing import Iterator, Optional, Dict, Any
+from typing import Any, Dict, Iterator, Optional
 
 try:  # Optional at import time to allow tests with FakeLLM without the SDK installed
-    from openai import OpenAI, AzureOpenAI  # type: ignore
+    from openai import AzureOpenAI, OpenAI  # type: ignore
 except Exception:  # pragma: no cover - only triggered when SDK missing
     OpenAI = None  # type: ignore
     AzureOpenAI = None  # type: ignore
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -30,6 +33,8 @@ class LLMClient:
         base_url: Optional[str] = None,
         api_version: Optional[str] = None,
         use_responses: bool = True,
+        timeout_s: Optional[float] = None,
+        max_retries: Optional[int] = None,
     ):
         if OpenAI is None:
             raise RuntimeError(
@@ -42,6 +47,10 @@ class LLMClient:
             "total_tokens": 0,
         }
         client_kwargs: dict[str, object] = {}
+        if timeout_s is not None:
+            client_kwargs["timeout"] = timeout_s
+        if max_retries is not None:
+            client_kwargs["max_retries"] = max_retries
         if base_url and "azure.com" in base_url.lower():
             if AzureOpenAI is None:
                 raise RuntimeError(
@@ -70,6 +79,46 @@ class LLMClient:
             return "response_format" in sig.parameters
         except Exception:
             return False
+
+    def _chat_via_responses(
+        self, model: str, inputs: list[Dict[str, str]], temp: Optional[float], response_format: Optional[dict]
+    ) -> str | dict:
+        request_kwargs: Dict[str, Any] = {"model": model, "input": inputs}
+        if temp is not None:
+            request_kwargs["temperature"] = temp
+        if response_format is not None and self._supports_response_format():
+            request_kwargs["response_format"] = response_format
+        resp = self.client.responses.create(**request_kwargs)
+        self._update_usage(resp)
+        if response_format is not None:
+            try:
+                first_output = resp.output[0]
+                first_content = first_output.content[0]
+                return first_content.parsed if hasattr(first_content, "parsed") else json.loads(first_content.text)
+            except Exception:
+                pass
+        return self._extract_responses_text(resp)
+
+    def _chat_via_chat_completions(
+        self, model: str, inputs: list[Dict[str, str]], temp: Optional[float], response_format: Optional[dict]
+    ) -> str | dict:
+        completion_kwargs: Dict[str, Any] = {"model": model, "messages": inputs}
+        if temp is not None:
+            completion_kwargs["temperature"] = temp
+        if response_format is not None:
+            completion_kwargs["response_format"] = response_format
+        resp = self.client.chat.completions.create(**completion_kwargs)
+        self._update_usage(resp)
+        try:
+            text_resp = str(resp.choices[0].message.content or "")
+        except Exception:
+            text_resp = ""
+        if response_format is not None:
+            try:
+                return json.loads(text_resp)
+            except Exception:
+                pass
+        return text_resp
 
     def _extract_responses_text(self, resp) -> str:
         if hasattr(resp, "output_text") and resp.output_text:
@@ -110,9 +159,7 @@ class LLMClient:
                 total_tokens = usage.get("total_tokens")
             else:
                 prompt_tokens = getattr(usage, "prompt_tokens", None) or getattr(usage, "input_tokens", None)
-                completion_tokens = getattr(usage, "completion_tokens", None) or getattr(
-                    usage, "output_tokens", None
-                )
+                completion_tokens = getattr(usage, "completion_tokens", None) or getattr(usage, "output_tokens", None)
                 total_tokens = getattr(usage, "total_tokens", None)
         if total_tokens is None and prompt_tokens is not None and completion_tokens is not None:
             total_tokens = prompt_tokens + completion_tokens
@@ -136,7 +183,8 @@ class LLMClient:
             request_kwargs = {"model": model, "input": inputs}
             if temp is not None:
                 request_kwargs["temperature"] = temp
-            with self.client.responses.stream(**request_kwargs) as s:
+            stream_fn = lambda: self.client.responses.stream(**request_kwargs)
+            with stream_fn() as s:
                 for event in s:
                     if event.type == "response.output_text.delta":
                         yield event.delta
@@ -146,7 +194,8 @@ class LLMClient:
             completion_kwargs = {"model": model, "messages": inputs}
             if temp is not None:
                 completion_kwargs["temperature"] = temp
-            for chunk in self.client.chat.completions.create(stream=True, **completion_kwargs):
+            stream_fn = lambda: self.client.chat.completions.create(stream=True, **completion_kwargs)
+            for chunk in stream_fn():
                 try:
                     delta = chunk.choices[0].delta.content
                     if delta:
@@ -168,28 +217,9 @@ class LLMClient:
         inputs = [{"role": m.role, "content": m.content} for m in messages]
         temp = 0.2 if self._supports_sampling(model) else None
         if self.use_responses:
-            request_kwargs = {"model": model, "input": inputs}
-            if temp is not None:
-                request_kwargs["temperature"] = temp
-            if response_format is not None and self._supports_response_format():
-                request_kwargs["response_format"] = response_format
-            resp = self.client.responses.create(**request_kwargs)
-            self._update_usage(resp)
-            if response_format is not None:
-                try:
-                    first_output = resp.output[0]
-                    first_content = first_output.content[0]
-                    return first_content.parsed if hasattr(first_content, "parsed") else json.loads(first_content.text)
-                except Exception:
-                    pass
-            return self._extract_responses_text(resp)
-        else:
-            completion_kwargs = {"model": model, "messages": inputs}
-            if temp is not None:
-                completion_kwargs["temperature"] = temp
-            resp = self.client.chat.completions.create(**completion_kwargs)
-            self._update_usage(resp)
             try:
-                return str(resp.choices[0].message.content or "")
-            except Exception:
-                pass
+                return self._chat_via_responses(model, inputs, temp, response_format)
+            except Exception as exc:
+                logger.info("LLM responses.create failed; falling back to chat.completions: %s", exc)
+                return self._chat_via_chat_completions(model, inputs, temp, response_format)
+        return self._chat_via_chat_completions(model, inputs, temp, response_format)
