@@ -23,6 +23,7 @@ import {
   determineEventPhase,
   normalizeStageName,
   StageCycleDetail,
+  StageTimelineItem,
   StagePhase,
   stagePhaseLabel,
   TimelineEvent,
@@ -76,6 +77,15 @@ const REVIEW_SUBSTEP_LABELS: Record<string, string> = {
   VERIFY: "Verify",
   REWRITE: "Rewrite",
 };
+
+const REVIEW_SUBSTAGES = [
+  "REVIEW_GENERAL",
+  "REVIEW_STYLE",
+  "REVIEW_COHESION",
+  "REVIEW_SUMMARY",
+  "VERIFY",
+  "REWRITE",
+] as const;
 
 export function JobDashboard({ initialJobId }: JobDashboardProps) {
   const { user, isLoading: authLoading, error: authError } = useUser();
@@ -881,15 +891,6 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
       };
     };
 
-    const REVIEW_SUBSTAGES = [
-      "REVIEW_GENERAL",
-      "REVIEW_STYLE",
-      "REVIEW_COHESION",
-      "REVIEW_SUMMARY",
-      "VERIFY",
-      "REWRITE",
-    ];
-
     return groupedTimeline.cycles.map(({ cycle, events }) => {
       const sortedEvents = [...events].sort((a, b) => {
         const ta = Number(a.ts ?? 0);
@@ -899,7 +900,11 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
       const substeps = REVIEW_SUBSTAGES.map((stageBase) => {
         const label = REVIEW_SUBSTEP_LABELS[stageBase] ?? formatStage(stageBase);
         const detail = buildDetail(stageBase, cycle, sortedEvents) || defaultDetail(stageBase, cycle);
-        return { stage: normalizeStageName(stageBase), label, detail };
+        return {
+          stage: stageBase as CombinedCycleDetail["substeps"][number]["stage"],
+          label,
+          detail,
+        };
       });
       return { cycle, substeps };
     });
