@@ -828,9 +828,9 @@ def process_review_general(data: Dict[str, Any], reviewer: ReviewerAgent | None 
                     ).to_payload()
                     publish_status(status_payload)
                     return
-                final_review_json = json.dumps(progress[\"general\"].get(\"accumulated\", {}), ensure_ascii=False)
-                store.put_text(blob=job_paths.cycle(cycle_idx, \"review.json\"), text=final_review_json)
-                progress[\"general\"][\"done\"] = True
+                final_review_json = json.dumps(progress["general"].get("accumulated", {}), ensure_ascii=False)
+                store.put_text(blob=job_paths.cycle(cycle_idx, "review.json"), text=final_review_json)
+                progress["general"]["done"] = True
 
     try:
         if renew_lock:
