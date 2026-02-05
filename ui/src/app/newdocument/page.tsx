@@ -55,10 +55,6 @@ const SUMMARY_STAGE_ORDER = [
   "INTAKE_RESUME",
   "PLAN",
   "WRITE",
-  "REVIEW_GENERAL",
-  "REVIEW_STYLE",
-  "REVIEW_COHESION",
-  "REVIEW_SUMMARY",
   "REVIEW",
   "VERIFY",
   "REWRITE",
@@ -68,6 +64,15 @@ const SUMMARY_STAGE_ORDER = [
 
 const SUBSTEP_LABELS: Record<string, string> = {
   REVIEW: "Review",
+  VERIFY: "Verify",
+  REWRITE: "Rewrite",
+};
+
+const REVIEW_SUBSTEP_LABELS: Record<string, string> = {
+  REVIEW_GENERAL: "General review",
+  REVIEW_STYLE: "Style review",
+  REVIEW_COHESION: "Cohesion review",
+  REVIEW_SUMMARY: "Executive summary",
   VERIFY: "Verify",
   REWRITE: "Rewrite",
 };
@@ -218,6 +223,11 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
 
   const formatStage = useCallback((stage: string) => {
     return stage.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  }, []);
+
+  const baseStageName = useCallback((stage?: string | null) => {
+    if (!stage) return "";
+    return stage.replace(/_(DONE|START|QUEUED|FAILED|ERROR|IN_PROGRESS)$/u, "");
   }, []);
 
   const stageOrder = useMemo(() => {
@@ -797,18 +807,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
   }, [groupedTimeline.cycles, getMetadataEntries]);
 
   const combinedReviewCycles = useMemo<CombinedCycleDetail[]>(() => {
-    const reviewDetails = cycleDetailsByStage.get("REVIEW") ?? [];
-    const verifyDetails = cycleDetailsByStage.get("VERIFY") ?? [];
-    const rewriteDetails = cycleDetailsByStage.get("REWRITE") ?? [];
-
-    const indexByCycle = (details: StageCycleDetail[]) =>
-      new Map(details.map((detail) => [detail.cycle, detail]));
-
-    const reviewMap = indexByCycle(reviewDetails);
-    const verifyMap = indexByCycle(verifyDetails);
-    const rewriteMap = indexByCycle(rewriteDetails);
-
-    const createDefaultDetail = (stageBase: "REVIEW" | "VERIFY" | "REWRITE", cycle: number): StageCycleDetail => ({
+    const defaultDetail = (stageBase: string, cycle: number): StageCycleDetail => ({
       cycle,
       status: "queued",
       metadataEntries: [],
@@ -823,20 +822,88 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
       lastUpdateTs: null,
     });
 
-    return groupedTimeline.cycles.map(({ cycle }) => {
-      const reviewDetail = reviewMap.get(cycle) ?? createDefaultDetail("REVIEW", cycle);
-      const verifyDetail = verifyMap.get(cycle) ?? createDefaultDetail("VERIFY", cycle);
-      const rewriteDetail = rewriteMap.get(cycle) ?? createDefaultDetail("REWRITE", cycle);
+    const buildDetail = (stageBase: string, cycle: number, events: TimelineEvent[]): StageCycleDetail => {
+      const stageEvents = events.filter((ev) => baseStageName(ev.stage ?? "") === stageBase);
+      const completionEvent = [...stageEvents].reverse().find((ev) => determineEventPhase(ev) === "complete");
+      const failedEvent = [...stageEvents].reverse().find((ev) => determineEventPhase(ev) === "failed");
+      const inProgressEvent = [...stageEvents].reverse().find((ev) => determineEventPhase(ev) === "in_progress");
+      const queuedEvent = [...stageEvents].reverse().find((ev) => determineEventPhase(ev) === "queued");
+
+      let status: StagePhase = "queued";
+      if (failedEvent) {
+        status = "failed";
+      } else if (completionEvent) {
+        status = "complete";
+      } else if (inProgressEvent) {
+        status = "in_progress";
+      } else if (queuedEvent) {
+        status = "queued";
+      } else if (stageEvents.length === 0) {
+        status = "queued";
+      } else {
+        status = "unknown";
+      }
+
+      const metadataSource =
+        completionEvent ??
+        inProgressEvent ??
+        stageEvents[stageEvents.length - 1] ??
+        null;
+      const metadataEntries = metadataSource ? getMetadataEntries(metadataSource) : [];
+
+      let timeline: StageTimelineItem[] = stageEvents.map((ev, idx) => ({
+        key: `${stageBase}-${cycle}-${idx}-${ev.stage}`,
+        label: stagePhaseLabel(determineEventPhase(ev)),
+        ts: ev.ts,
+      }));
+      if (timeline.length === 0) {
+        timeline = [
+          {
+            key: `${stageBase}-${cycle}-not-started`,
+            label: "Not started",
+            ts: undefined,
+          },
+        ];
+      }
+
+      const completionTs = completionEvent?.ts ?? null;
+      const lastUpdateTs =
+        metadataSource?.ts ??
+        (stageEvents.length ? stageEvents[stageEvents.length - 1]?.ts : null);
+
       return {
         cycle,
-        substeps: [
-          { stage: "REVIEW", label: SUBSTEP_LABELS.REVIEW, detail: reviewDetail },
-          { stage: "VERIFY", label: SUBSTEP_LABELS.VERIFY, detail: verifyDetail },
-          { stage: "REWRITE", label: SUBSTEP_LABELS.REWRITE, detail: rewriteDetail },
-        ],
+        status,
+        metadataEntries,
+        timeline,
+        completionTs,
+        lastUpdateTs,
       };
+    };
+
+    const REVIEW_SUBSTAGES = [
+      "REVIEW_GENERAL",
+      "REVIEW_STYLE",
+      "REVIEW_COHESION",
+      "REVIEW_SUMMARY",
+      "VERIFY",
+      "REWRITE",
+    ];
+
+    return groupedTimeline.cycles.map(({ cycle, events }) => {
+      const sortedEvents = [...events].sort((a, b) => {
+        const ta = Number(a.ts ?? 0);
+        const tb = Number(b.ts ?? 0);
+        return ta - tb;
+      });
+      const substeps = REVIEW_SUBSTAGES.map((stageBase) => {
+        const label = REVIEW_SUBSTEP_LABELS[stageBase] ?? formatStage(stageBase);
+        const detail = buildDetail(stageBase, cycle, sortedEvents) || defaultDetail(stageBase, cycle);
+        return { stage: normalizeStageName(stageBase), label, detail };
+      });
+      return { cycle, substeps };
     });
-  }, [cycleDetailsByStage, groupedTimeline.cycles]);
+  }, [baseStageName, formatStage, getMetadataEntries, groupedTimeline.cycles]);
 
   const [expandedCycles, setExpandedCycles] = useState<Record<number, boolean>>({});
   const [expandedSubsteps, setExpandedSubsteps] = useState<Record<number, Record<string, boolean>>>({});

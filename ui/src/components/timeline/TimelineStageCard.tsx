@@ -87,18 +87,7 @@ export const TimelineStageCard: FC<TimelineStageCardProps> = ({
     const totalCycles = reviewCycles.length;
 
     const isSubstepComplete = (substep: CombinedCycleDetail["substeps"][number]) => {
-      if (substep.detail.status === "complete") {
-        return true;
-      }
-      if (
-        substep.stage === "REWRITE" &&
-        substep.detail.status === "queued" &&
-        substep.detail.timeline.length === 1 &&
-        substep.detail.timeline[0].label === "Not started"
-      ) {
-        return true;
-      }
-      return false;
+      return substep.detail.status === "complete";
     };
 
     const isCycleComplete = (cycleDetail: CombinedCycleDetail) => cycleDetail.substeps.every(isSubstepComplete);

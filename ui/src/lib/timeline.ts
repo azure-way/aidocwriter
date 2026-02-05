@@ -33,21 +33,20 @@ export type StageCycleDetail = {
 export type CombinedCycleDetail = {
   cycle: number;
   substeps: Array<{
-    stage: "REVIEW" | "VERIFY" | "REWRITE";
+    stage:
+      | "REVIEW"
+      | "REVIEW_GENERAL"
+      | "REVIEW_STYLE"
+      | "REVIEW_COHESION"
+      | "REVIEW_SUMMARY"
+      | "VERIFY"
+      | "REWRITE";
     label: string;
     detail: StageCycleDetail;
   }>;
 };
 
-export const CYCLE_AWARE_STAGES = [
-  "REVIEW_GENERAL",
-  "REVIEW_STYLE",
-  "REVIEW_COHESION",
-  "REVIEW_SUMMARY",
-  "REVIEW",
-  "VERIFY",
-  "REWRITE",
-] as const;
+export const CYCLE_AWARE_STAGES = ["REVIEW", "VERIFY", "REWRITE"] as const;
 export const CYCLE_AWARE_STAGE_SET = new Set<string>(CYCLE_AWARE_STAGES);
 
 export const cycleStatusStyles: Record<StagePhase, { badge: string; container: string }> = {
@@ -75,6 +74,14 @@ export const cycleStatusStyles: Record<StagePhase, { badge: string; container: s
 
 export const normalizeStageName = (value: string): string => {
   const base = value.replace(/_(DONE|START|QUEUED|FAILED|ERROR|IN_PROGRESS)$/u, "");
+  if (
+    base === "REVIEW_GENERAL" ||
+    base === "REVIEW_STYLE" ||
+    base === "REVIEW_COHESION" ||
+    base === "REVIEW_SUMMARY"
+  ) {
+    return "REVIEW";
+  }
   if (base === "INTAKE_RESUMED") {
     return "INTAKE_RESUME";
   }
