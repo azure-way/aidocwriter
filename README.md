@@ -58,6 +58,9 @@
    export SERVICE_BUS_QUEUE_FINALIZE_READY=docwriter-finalize-ready
    export SERVICE_BUS_TOPIC_STATUS=docwriter-status
    export SERVICE_BUS_STATUS_SUBSCRIPTION=status-writer
+   export DOCWRITER_WRITE_BATCH_SIZE=5                 # sections per write batch
+   export DOCWRITER_REVIEW_BATCH_SIZE=3                # sections per review batch (per agent)
+   export DOCWRITER_REVIEW_MAX_PROMPT_TOKENS=12000     # prompt cap to split review batches safely
    export AZURE_STORAGE_CONNECTION_STRING=...
    export AZURE_BLOB_CONTAINER=docwriter
    export PLANTUML_SERVER_URL=https://plantuml.example.com/plantuml
@@ -90,8 +93,8 @@
 1. **Intake Questions (`PLAN_INTAKE`)** – Interviewer agent drafts clarifying questions; responses land in `jobs/{job_id}/intake/`.
 2. **Intake Resume (`INTAKE_RESUME`)** – Answers hydrate the job context and allocate the working document blob.
 3. **Plan (`PLAN`)** – Planner builds the outline, glossary, style guardrails, and PlantUML specs (`plan.json`).
-4. **Write (`WRITE`)** – Writer creates each section in dependency order, embeds diagram stubs, tracks summaries, and stores `draft.md`.
-5. **Review (`REVIEW`)** – Reviewer ensemble (general, style, cohesion, executive summary) returns JSON feedback per cycle.
+4. **Write (`WRITE`)** – Writer creates sections in dependency order in configurable batches (`DOCWRITER_WRITE_BATCH_SIZE`), embeds diagram stubs, tracks summaries, and stores `draft.md`.
+5. **Review (`REVIEW`)** – Reviewer ensemble runs on split queues (general → style → cohesion → executive summary) and now batches multiple sections per call (`DOCWRITER_REVIEW_BATCH_SIZE`, prompt-capped by `DOCWRITER_REVIEW_MAX_PROMPT_TOKENS`) to reduce tokens and queue churn.
 6. **Verify (`VERIFY`)** – Applies reviewer revisions, flags contradictions, and notes placeholders to drive targeted rewrites.
 7. **Rewrite (`REWRITE`)** – Rewrites only affected sections using dependency context and combined guidance.
 8. **Diagram Prep (`DIAGRAM`)** – Extracts PlantUML/Mermaid blocks, uploads sanitized `.puml` sources, and queues render requests (emitting SKIPPED/QUEUED events).
@@ -133,8 +136,8 @@
   - Diagram formatter: Cleans PlantUML and ensures valid syntax before render.
   - Finalizer: Applies rendered diagrams, numbers headings, preserves links, and emits PDF/DOCX.
 - Stage workers
-  - PLAN_INTAKE (questions to Blob) → INTAKE_RESUME (user answers) → PLAN → WRITE → REVIEW (incl. style/cohesion/exec) → VERIFY → REWRITE → back to REVIEW (loop by cycles) → VERIFY → FINALIZE
-  - Enforces dependency-aware order and performs contradiction verification and targeted rewrites.
+  - PLAN_INTAKE (questions to Blob) → INTAKE_RESUME (user answers) → PLAN → WRITE (batched) → REVIEW (general → style → cohesion → executive summary, batched per stage) → VERIFY → REWRITE → back to REVIEW (loop by cycles) → VERIFY → FINALIZE
+  - Enforces dependency-aware order, configurable batching for write/review, and performs contradiction verification and targeted rewrites.
 - Clients
   - OpenAI client abstraction supports streaming and model selection per agent.
   - Service Bus producer/worker and Status topic for horizontal scaling and monitoring.
