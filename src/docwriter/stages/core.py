@@ -243,17 +243,17 @@ def _apply_diagram_results(text: str, results: List[Dict[str, Any]], job_paths: 
     for item in results:
         code_block = item.get("code_block")
         blob_path = item.get("relative_path") or item.get("blob_path")
-        if not code_block or not blob_path:
-            error_text = (item.get("error") or item.get("error_message") or "").strip()
-            if not error_text:
-                continue
-            diagram_id = item.get("diagram_id")
-            replacement = f'<div style="color:#b91c1c;font-weight:700;">Diagram failed to render{f" ({diagram_id})" if diagram_id else ""}: {error_text}</div>'
-        else:
-            relative_path = blob_path[len(root_prefix) :] if blob_path.startswith(root_prefix) else blob_path
-            diagram_id = item.get("diagram_id")
-            alt_text = item.get("alt_text") or (f"Diagram {diagram_id}" if diagram_id else "Diagram")
-            replacement = f"![{alt_text}]({relative_path})"
+        # if not code_block or not blob_path:
+        #     error_text = (item.get("error") or item.get("error_message") or "").strip()
+        #     if not error_text:
+        #         continue
+        #     diagram_id = item.get("diagram_id")
+        #     replacement = f'<div style="color:#b91c1c;font-weight:700;">Diagram failed to render{f" ({diagram_id})" if diagram_id else ""}: {error_text}</div>'
+        # else:
+        relative_path = blob_path[len(root_prefix) :] if blob_path.startswith(root_prefix) else blob_path
+        diagram_id = item.get("diagram_id")
+        alt_text = item.get("alt_text") or (f"Diagram {diagram_id}" if diagram_id else "Diagram")
+        replacement = f"![{alt_text}]({relative_path})"
         replaced = False
         if code_block and code_block in updated:
             updated = updated.replace(code_block, replacement, 1)
