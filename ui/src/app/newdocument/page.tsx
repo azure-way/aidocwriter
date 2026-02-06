@@ -389,11 +389,13 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
               if (typeof completionTokens === "number" && completionTokens > 0) {
                 return completionTokens;
               }
-              return stageOnly.reduce((acc, ev) => acc + (getTokensFromEvent(ev) ?? 0), 0);
+              const latestInProgress = [...stageOnly].reverse().find((ev) => determineEventPhase(ev) === "in_progress");
+              const inProgressTokens = latestInProgress ? getTokensFromEvent(latestInProgress) : null;
+              return typeof inProgressTokens === "number" && inProgressTokens > 0 ? inProgressTokens : 0;
             })()
           : stageOnly.reduce((acc, ev) => acc + (getTokensFromEvent(ev) ?? 0), 0);
       const parsed = extractParsedMessage(event);
-      const tokensDisplay = tokensTotal.toLocaleString();
+      const tokensDisplay = tokensTotal > 0 ? tokensTotal.toLocaleString() : undefined;
       const nextDetails: Record<string, unknown> = { ...(event.details ?? {}) };
       if (tokensTotal > 0) {
         nextDetails.tokens = tokensTotal;
