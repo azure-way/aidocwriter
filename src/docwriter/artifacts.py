@@ -243,6 +243,34 @@ def _wrap_html_for_pdf(html: str) -> str:
             height: auto;
             page-break-inside: avoid;
         }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 0.5rem 0 1rem 0;
+            font-size: 12pt;
+        }
+
+        th, td {
+            border: 1px solid #cbd5e1;
+            padding: 6px 10px;
+            text-align: left;
+        }
+
+        th {
+            background: #e2e8f0;
+            font-weight: 700;
+            border-top: 1px solid #cbd5e1;
+            border-bottom: 2px solid #475569;
+        }
+
+        tbody tr:nth-child(odd) {
+            background: #f8fafc;
+        }
+
+        tbody tr:nth-child(even) {
+            background: #f1f5f9;
+        }
     </style>
     """
     return f"<!DOCTYPE html><html><head><meta charset='utf-8'/>{styles}</head><body>{html}</body></html>"
