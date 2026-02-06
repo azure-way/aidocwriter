@@ -52,17 +52,17 @@ export default function SampleDocumentsPage() {
         </div>
       </header>
 
-      <div className="grid gap-6 lg:grid-cols-[0.8fr_1.2fr]">
-        <div className="flex flex-col gap-3">
+      <div className="grid gap-6 lg:grid-cols-[0.7fr_1.3fr]">
+        <div className="flex flex-col gap-2.5 max-w-2xl">
           {documents.map((doc) => (
-            <article key={doc.slug} className="rounded-3xl bg-white/90 p-6 text-slate-900 shadow-[0_28px_75px_rgba(15,23,42,0.3)]">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <article key={doc.slug} className="rounded-3xl bg-white/90 p-5 text-slate-900 shadow-[0_24px_60px_rgba(15,23,42,0.28)]">
+              <div className="flex flex-col gap-2.5 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <h2 className="text-xl font-semibold">{doc.title}</h2>
-                  <p className="mt-1.5 text-sm text-slate-600">{doc.summary}</p>
-                  <div className="mt-2 flex flex-wrap gap-2">
+                  <h2 className="text-lg font-semibold">{doc.title}</h2>
+                  <p className="mt-1 text-sm text-slate-600">{doc.summary}</p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
                     {doc.highlights.map((tag) => (
-                      <span key={tag} className="rounded-full bg-slate-900/5 px-2.5 py-1 text-[11px] font-semibold text-slate-700">
+                      <span key={tag} className="rounded-full bg-slate-900/5 px-2 py-[6px] text-[10px] font-semibold text-slate-700">
                         {tag}
                       </span>
                     ))}
