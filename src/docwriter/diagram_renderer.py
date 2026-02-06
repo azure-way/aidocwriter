@@ -198,7 +198,7 @@ def _render_with_plantuml(
         except Exception as exc:  # pragma: no cover - defensive
             last_exc = exc
             track_exception(exc, {"stage": "DIAGRAM_RENDER", "attempt": str(attempt + 1)})
-            if regen_after_second_failure and attempt == 1:
+            if regen_after_second_failure and attempt == 0:
                 try:
                     regenerated = regen_after_second_failure()
                     if regenerated:
