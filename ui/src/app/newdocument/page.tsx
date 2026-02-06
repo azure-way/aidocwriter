@@ -439,6 +439,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
         : [];
 
       const completionEvent = [...related].reverse().find((entry) => determineEventPhase(entry) === "complete");
+      const failedEvent = [...related].reverse().find((entry) => determineEventPhase(entry) === "failed");
       if (completionEvent) {
         return applyStageAggregation(
           {
@@ -448,6 +449,20 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
             status: "complete" as const,
             displayStage: formatStage(base),
             sourceStage: completionEvent.stage,
+          },
+          related
+        );
+      }
+
+      if (failedEvent) {
+        return applyStageAggregation(
+          {
+            ...failedEvent,
+            stage,
+            pending: false,
+            status: "failed" as const,
+            displayStage: formatStage(base),
+            sourceStage: failedEvent.stage,
           },
           related
         );

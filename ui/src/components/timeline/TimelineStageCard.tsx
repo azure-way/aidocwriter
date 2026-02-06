@@ -32,12 +32,15 @@ type TimelineStageCardProps = {
   setExpandedSubsteps: Dispatch<SetStateAction<SubstepExpansionState>>;
 };
 
-const getBadgeClass = (status: "complete" | "active" | "pending") => {
+const getBadgeClass = (status: "complete" | "active" | "pending" | "failed") => {
   if (status === "complete") {
     return "bg-indigo-500 text-white";
   }
   if (status === "active") {
     return "border border-indigo-300 bg-indigo-50 text-indigo-600";
+  }
+  if (status === "failed") {
+    return "border border-rose-300 bg-rose-50 text-rose-700";
   }
   return "bg-white border border-slate-200 text-slate-400";
 };
@@ -60,12 +63,13 @@ export const TimelineStageCard: FC<TimelineStageCardProps> = ({
   setExpandedSubsteps,
 }) => {
   const status = event.status ?? (event.pending ? "pending" : "complete");
+  const failed = status === "failed";
   const completed = status === "complete";
   const active = status === "active";
   const label = event.displayStage ?? formatStage(event.stage);
-  const statusLabel = completed ? "Completed" : active ? "Running" : "Not started";
+  const statusLabel = completed ? "Completed" : active ? "Running" : failed ? "Failed" : "Not started";
   const secondaryText =
-    (completed || active) && event.ts != null
+    (completed || active || failed) && event.ts != null
       ? `${statusLabel} • ${formatTimestamp(event.ts)}`
       : statusLabel;
   const badgeClass = getBadgeClass(status);
@@ -116,7 +120,7 @@ export const TimelineStageCard: FC<TimelineStageCardProps> = ({
           >
             <div>
               <p className="text-sm font-semibold text-slate-700">{label}</p>
-              <p className="text-xs text-slate-500">{secondaryText}</p>
+              <p className={`text-xs ${failed ? "text-rose-600" : "text-slate-500"}`}>{secondaryText}</p>
               {tokensDisplay ? <p className="mt-1 text-xs text-slate-500">Tokens: {tokensDisplay}</p> : null}
             </div>
             <span className="text-lg text-slate-500">{isStageExpanded ? "−" : "+"}</span>
@@ -127,7 +131,7 @@ export const TimelineStageCard: FC<TimelineStageCardProps> = ({
               showSourceStage={Boolean(sourceStageLabel)}
               metadataEntries={metadataEntries}
               message={event.message}
-              showMessage={completed || active}
+              showMessage={completed || active || failed}
               artifact={event.artifact}
               renderArtifactActions={renderArtifactActions}
               stageBase={stageBase}

@@ -248,7 +248,7 @@ def _apply_diagram_results(text: str, results: List[Dict[str, Any]], job_paths: 
             if not error_text:
                 continue
             diagram_id = item.get("diagram_id")
-            replacement = f'<div style="color:#b91c1c;font-weight:700;">Diagram failed to render{f\" ({diagram_id})\" if diagram_id else \"\"}: {error_text}</div>'
+            replacement = f'<div style="color:#b91c1c;font-weight:700;">Diagram failed to render{f" ({diagram_id})" if diagram_id else ""}: {error_text}</div>'
         else:
             relative_path = blob_path[len(root_prefix) :] if blob_path.startswith(root_prefix) else blob_path
             diagram_id = item.get("diagram_id")

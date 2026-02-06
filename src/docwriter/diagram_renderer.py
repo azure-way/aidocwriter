@@ -111,8 +111,6 @@ def _regenerate_from_description(
         text = client.chat(
             model=settings.writer_model,
             messages=[LLMMessage("system", sys), LLMMessage("user", prompt)],
-            max_output_tokens=600,
-            temperature=0.2,
         )
     except Exception as exc:  # pragma: no cover - defensive
         track_exception(exc, {"stage": "DIAGRAM_RENDER", "operation": "regenerate_from_description"})

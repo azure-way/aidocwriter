@@ -10,7 +10,7 @@ export interface TimelineEvent {
   cycle?: number | null;
   details?: Record<string, unknown> | null;
   pending?: boolean;
-  status?: "pending" | "active" | "complete";
+  status?: "pending" | "active" | "complete" | "failed";
   displayStage?: string;
   sourceStage?: string;
 }
