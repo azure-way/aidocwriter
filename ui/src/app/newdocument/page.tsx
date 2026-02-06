@@ -440,6 +440,87 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
           })
         : [];
 
+      if (base === "REVIEW") {
+        const failedEvent = [...related].reverse().find((entry) => determineEventPhase(entry) === "failed");
+        const summaryCompletion = [...related]
+          .reverse()
+          .find((entry) => {
+            const stageName = entry.stage?.toUpperCase() ?? "";
+            return (
+              determineEventPhase(entry) === "complete" &&
+              (stageName.includes("REVIEW_SUMMARY_DONE") || stageName === "REVIEW_DONE" || stageName === "REVIEW")
+            );
+          });
+        if (failedEvent) {
+          return applyStageAggregation(
+            {
+              ...failedEvent,
+              stage,
+              pending: false,
+              status: "failed" as const,
+              displayStage: formatStage(base),
+              sourceStage: failedEvent.stage,
+            },
+            related
+          );
+        }
+        if (summaryCompletion) {
+          return applyStageAggregation(
+            {
+              ...summaryCompletion,
+              stage,
+              pending: false,
+              status: "complete" as const,
+              displayStage: formatStage(base),
+              sourceStage: summaryCompletion.stage,
+            },
+            related
+          );
+        }
+        const inProgressEvent = [...related].reverse().find((entry) => determineEventPhase(entry) === "in_progress");
+        if (inProgressEvent) {
+          return applyStageAggregation(
+            {
+              ...inProgressEvent,
+              stage,
+              pending: false,
+              status: "active" as const,
+              displayStage: formatStage(base),
+              sourceStage: inProgressEvent.stage,
+            },
+            related
+          );
+        }
+        const queuedEvent = [...related].reverse().find((entry) => determineEventPhase(entry) === "queued");
+        if (queuedEvent) {
+          return applyStageAggregation(
+            {
+              ...queuedEvent,
+              stage,
+              pending: false,
+              status: "active" as const,
+              displayStage: formatStage(base),
+              sourceStage: queuedEvent.stage,
+            },
+            related
+          );
+        }
+        const latest = related[related.length - 1];
+        if (latest) {
+          return applyStageAggregation(
+            {
+              ...latest,
+              stage,
+              pending: false,
+              status: "active" as const,
+              displayStage: formatStage(base),
+              sourceStage: latest.stage,
+            },
+            related
+          );
+        }
+      }
+
       const completionEvent = [...related].reverse().find((entry) => determineEventPhase(entry) === "complete");
       const failedEvent = [...related].reverse().find((entry) => determineEventPhase(entry) === "failed");
       if (completionEvent) {
