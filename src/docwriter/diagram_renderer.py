@@ -83,16 +83,17 @@ def _regenerate_from_description(
     diagram_type: str | None,
     entities: List[str] | None,
     relationships: List[str] | None,
+
 ) -> Optional[str]:
     """Attempt to rebuild PlantUML from a description when rendering failed twice."""
     if not description:
         return None
-    settings = get_settings()
     client = _get_reformat_client()
     sys = (
         "You are a PlantUML fixer. Given a description and optional entities/relationships, produce a minimal,"
         " valid PlantUML diagram. Do not return Markdown fences. Include exactly one @startuml and one @enduml."
         " Prefer simple shapes and arrows that match the description. Keep labels short and on one line."
+        " Escape characters as needed to maintain valid PlantUML syntax. Do not include any commentary or explanation, only the PlantUML code."
     )
     parts = [
         f"Diagram id: {diagram_id}",
@@ -107,9 +108,10 @@ def _regenerate_from_description(
     parts.append("PlantUML reference (use for syntax choices only):")
     parts.append(PLANTUML_REFERENCE_TEXT)
     prompt = "\n".join(parts)
+    model = os.getenv("DOCWRITER_PLANTUML_REFORMAT_MODEL", "gpt-5.1-codex")
     try:
         text = client.chat(
-            model=settings.writer_model,
+            model=model,
             messages=[LLMMessage("system", sys), LLMMessage("user", prompt)],
         )
     except Exception as exc:  # pragma: no cover - defensive
@@ -143,6 +145,7 @@ def _reformat_plantuml_text(source: str | bytes) -> str:
         "- All elements (actors, participants, lifelines, states, etc.) are clearly defined\n"
         "- The diagram remains functionally identical\n"
         "- Do not convert to Mermaid or any other format\n"
+        "- Escape characters as needed to maintain valid PlantUML syntax\n"
         "Return only the fixed PlantUML without additional commentary or fences."
     )
     messages = [
@@ -180,7 +183,7 @@ def _render_with_plantuml(
 
     last_exc: Exception | None = None
     last_source = source
-    for attempt in range(3):
+    for attempt in range(5):
         try:
             uml_source = _reformat_plantuml_text(last_source)
             last_source = uml_source
@@ -198,7 +201,7 @@ def _render_with_plantuml(
         except Exception as exc:  # pragma: no cover - defensive
             last_exc = exc
             track_exception(exc, {"stage": "DIAGRAM_RENDER", "attempt": str(attempt + 1)})
-            if regen_after_second_failure and attempt == 0:
+            if regen_after_second_failure:
                 try:
                     regenerated = regen_after_second_failure()
                     if regenerated:
@@ -254,51 +257,66 @@ def process_diagram_render(data: Dict[str, Any]) -> None:
                 extra={"message": start_message},
             )
             results: List[Dict[str, Any]] = []
+            generated_count = 0
             for request in requests:
                 diag_id = request.get("diagram_id") or str(uuid4())
                 fmt = _normalize_format(request.get("format"))
                 blob_path = request.get("blob_path") or job_paths.images(f"{diag_id}.{fmt}")
                 source_path = request.get("source_path")
-                if not source_path:
-                    raise DiagramRenderError(f"diagram {diag_id} missing source_path")
-                try:
-                    source_text = store.get_text(source_path)
-                except Exception as exc:
-                    raise DiagramRenderError(f"failed to load diagram source for {diag_id}: {exc}") from exc
-                formatted_source = _reformat_plantuml_text(source_text)
-                if formatted_source != source_text:
-                    store.put_text(source_path, formatted_source)
-                spec = plan_specs.get(diag_id) or {}
-                regen_fn = None
-                description = spec.get("plantuml_prompt") or spec.get("description")
-                if description:
-                    entities = spec.get("entities") if isinstance(spec.get("entities"), list) else None
-                    relationships = spec.get("relationships") if isinstance(spec.get("relationships"), list) else None
-                    regen_fn = lambda desc=description, dtype=spec.get("diagram_type"), ent=entities, rel=relationships, did=diag_id: _regenerate_from_description(
-                        did, desc, dtype, ent, rel
-                    )
-                content = _render_with_plantuml(formatted_source, fmt, regen_after_second_failure=regen_fn)
-                store.put_bytes(blob=blob_path, data_bytes=content)
-                relative_path = blob_path
-                prefix = f"{job_paths.root}/"
-                if blob_path.startswith(prefix):
-                    relative_path = blob_path[len(prefix) :]
                 code_block_map = code_blocks if isinstance(code_blocks, dict) else {}
-                results.append(
-                    {
-                        "diagram_id": diag_id,
-                        "blob_path": blob_path,
-                        "relative_path": relative_path,
-                        "code_block": code_block_map.get(diag_id),
-                        "format": fmt,
-                        "alt_text": request.get("alt_text"),
-                    }
-                )
+                try:
+                    if not source_path:
+                        raise DiagramRenderError(f"diagram {diag_id} missing source_path")
+                    source_text = store.get_text(source_path)
+                    formatted_source = _reformat_plantuml_text(source_text)
+                    if formatted_source != source_text:
+                        store.put_text(source_path, formatted_source)
+                    spec = plan_specs.get(diag_id) or {}
+                    regen_fn = None
+                    description = spec.get("plantuml_prompt") or spec.get("description")
+                    if description:
+                        entities = spec.get("entities") if isinstance(spec.get("entities"), list) else None
+                        relationships = spec.get("relationships") if isinstance(spec.get("relationships"), list) else None
+                        regen_fn = lambda desc=description, dtype=spec.get("diagram_type"), ent=entities, rel=relationships, did=diag_id: _regenerate_from_description(
+                            did, desc, dtype, ent, rel
+                        )
+                    content = _render_with_plantuml(formatted_source, fmt, regen_after_second_failure=regen_fn)
+                    store.put_bytes(blob=blob_path, data_bytes=content)
+                    relative_path = blob_path
+                    prefix = f"{job_paths.root}/"
+                    if blob_path.startswith(prefix):
+                        relative_path = blob_path[len(prefix) :]
+                    results.append(
+                        {
+                            "diagram_id": diag_id,
+                            "blob_path": blob_path,
+                            "relative_path": relative_path,
+                            "code_block": code_block_map.get(diag_id),
+                            "format": fmt,
+                            "alt_text": request.get("alt_text"),
+                        }
+                    )
+                    generated_count += 1
+                except Exception as exc:
+                    track_exception(exc, {"stage": "DIAGRAM_RENDER", "diagram_id": diag_id})
+                    results.append(
+                        {
+                            "diagram_id": diag_id,
+                            "code_block": code_block_map.get(diag_id),
+                            "alt_text": request.get("alt_text"),
+                            "error": f"Diagram failed: {exc}",
+                        }
+                    )
             payload = {**finalize_payload, "diagram_results": results}
             payload.setdefault("job_id", job_id)
             payload.setdefault("user_id", user_id)
             send_queue_message(settings.sb_queue_finalize_ready, payload)
-            complete_message = f"Generated {len(results)} diagram{'s' if len(results) != 1 else ''}"
+            total_requested = len(requests)
+            failed_count = total_requested - generated_count
+            if failed_count:
+                complete_message = f"Generated {generated_count} of {total_requested} diagrams (failed {failed_count})"
+            else:
+                complete_message = f"Generated {generated_count} diagram{'s' if generated_count != 1 else ''}"
             publish_stage_event("DIAGRAM", "DONE", payload, extra={"message": complete_message})
             publish_stage_event("FINALIZE", "QUEUED", payload)
         except DiagramRenderError as exc:
