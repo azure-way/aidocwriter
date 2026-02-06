@@ -76,8 +76,8 @@ class Settings:
     sb_status_subscription: str = "console"
     sb_lock_renew_s: float = 900.0
     write_batch_size: int = 5
-    review_batch_size: int = 4
-    review_max_prompt_tokens: int = 25000
+    review_batch_size: int = 3
+    review_max_prompt_tokens: int = 15000
 
     # Behavior
     request_timeout_s: int = 120
