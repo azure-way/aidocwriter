@@ -177,9 +177,10 @@ def _plan_review_batches(
     id_to_section: Mapping[str, Mapping[str, Any]],
     dependency_summaries: Mapping[str, str],
     settings: Settings,
+    batch_size_override: int | None = None,
 ) -> list[list[str]]:
     """Greedy batching: group sections that share dependencies while staying under limits."""
-    max_batch = max(1, int(settings.review_batch_size or 1))
+    max_batch = max(1, int(batch_size_override or settings.review_batch_size or 1))
     max_tokens = max(1, int(settings.review_max_prompt_tokens or 1))
     remaining = [sid for sid in ordered_section_ids if sid not in completed_ids]
     batches: list[list[str]] = []
@@ -769,7 +770,15 @@ def process_review_general(data: Dict[str, Any], reviewer: ReviewerAgent | None 
             progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(reviewer.llm, "last_usage", None))
             progress["general"]["done"] = True
         else:
-            batches = _plan_review_batches(ordered_section_ids, reviewed_sections, sections, id_to_section, dependency_summaries, settings)
+            batches = _plan_review_batches(
+                ordered_section_ids,
+                reviewed_sections,
+                sections,
+                id_to_section,
+                dependency_summaries,
+                settings,
+                settings.review_batch_size,
+            )
             if not batches:
                 progress["general"]["done"] = True
             else:
@@ -930,7 +939,15 @@ def process_review_style(data: Dict[str, Any], style_agent: StyleReviewerAgent |
             progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(style_agent.llm, "last_usage", None))
             progress["style"]["done"] = True
         else:
-            batches = _plan_review_batches(ordered_section_ids, reviewed_sections, sections, id_to_section, dependency_summaries, settings)
+            batches = _plan_review_batches(
+                ordered_section_ids,
+                reviewed_sections,
+                sections,
+                id_to_section,
+                dependency_summaries,
+                settings,
+                settings.review_style_batch_size,
+            )
             if not batches:
                 progress["style"]["done"] = True
             else:
@@ -1049,7 +1066,15 @@ def process_review_cohesion(data: Dict[str, Any], cohesion_agent: CohesionReview
             progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(cohesion_agent.llm, "last_usage", None))
             progress["cohesion"]["done"] = True
         else:
-            batches = _plan_review_batches(ordered_section_ids, reviewed_sections, sections, id_to_section, dependency_summaries, settings)
+            batches = _plan_review_batches(
+                ordered_section_ids,
+                reviewed_sections,
+                sections,
+                id_to_section,
+                dependency_summaries,
+                settings,
+                settings.review_cohesion_batch_size,
+            )
             if not batches:
                 progress["cohesion"]["done"] = True
             else:
@@ -1178,7 +1203,15 @@ def process_review_summary(data: Dict[str, Any], summary_agent: SummaryReviewerA
             progress["tokens_total"] = progress.get("tokens_total", 0) + _usage_total(getattr(summary_agent.llm, "last_usage", None))
             progress["summary"]["done"] = True
         else:
-            batches = _plan_review_batches(ordered_section_ids, reviewed_sections, sections, id_to_section, dependency_summaries, settings)
+            batches = _plan_review_batches(
+                ordered_section_ids,
+                reviewed_sections,
+                sections,
+                id_to_section,
+                dependency_summaries,
+                settings,
+                settings.review_summary_batch_size,
+            )
             if not batches:
                 progress["summary"]["done"] = True
             else:

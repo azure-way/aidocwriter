@@ -77,6 +77,9 @@ class Settings:
     sb_lock_renew_s: float = 900.0
     write_batch_size: int = 5
     review_batch_size: int = 3
+    review_style_batch_size: int = 5
+    review_cohesion_batch_size: int = 5
+    review_summary_batch_size: int = 5
     review_max_prompt_tokens: int = 15000
 
     # Behavior
@@ -132,6 +135,9 @@ class Settings:
             sb_lock_renew_s=_coerce_float(env.get("SERVICE_BUS_LOCK_RENEW_S"), cls.sb_lock_renew_s),
             write_batch_size=_coerce_int(env.get("DOCWRITER_WRITE_BATCH_SIZE"), cls.write_batch_size),
             review_batch_size=_coerce_int(env.get("DOCWRITER_REVIEW_BATCH_SIZE"), cls.review_batch_size),
+            review_style_batch_size=_coerce_int(env.get("DOCWRITER_REVIEW_STYLE_BATCH_SIZE"), cls.review_style_batch_size),
+            review_cohesion_batch_size=_coerce_int(env.get("DOCWRITER_REVIEW_COHESION_BATCH_SIZE"), cls.review_cohesion_batch_size),
+            review_summary_batch_size=_coerce_int(env.get("DOCWRITER_REVIEW_SUMMARY_BATCH_SIZE"), cls.review_summary_batch_size),
             review_max_prompt_tokens=_coerce_int(env.get("DOCWRITER_REVIEW_MAX_PROMPT_TOKENS"), cls.review_max_prompt_tokens),
             request_timeout_s=_coerce_int(env.get("DOCWRITER_REQUEST_TIMEOUT_S"), cls.request_timeout_s),
             max_section_tokens=_coerce_int(env.get("DOCWRITER_MAX_SECTION_TOKENS"), cls.max_section_tokens),
