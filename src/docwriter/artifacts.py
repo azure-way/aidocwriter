@@ -246,15 +246,20 @@ def _wrap_html_for_pdf(html: str) -> str:
 
         table {
             width: 100%;
+            max-width: 100%;
             border-collapse: collapse;
             margin: 0.5rem 0 1rem 0;
             font-size: 12pt;
+            table-layout: fixed;
         }
 
         th, td {
             border: 1px solid #cbd5e1;
             padding: 6px 10px;
             text-align: left;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+            white-space: normal;
         }
 
         th {
