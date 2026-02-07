@@ -1,0 +1,87 @@
+Plan
+
+Title
+SignalR-based realtime status delivery (replace status/timeline polling)
+
+Summary
+
+Provision Azure SignalR Service (serverless) and wire it into the existing status topic fan-out.
+Extend the status listener Function to broadcast every status/timeline event to SignalR while still persisting to Table Storage for catch-up.
+Add a negotiate endpoint that authenticates the user, scopes them to their job, and returns both SignalR connection info and the latest history snapshot.
+Update the Next.js UI to connect via SignalR, seed from the snapshot, stream updates, and remove status/timeline REST usage.
+Retire the /jobs/{job_id}/status and /jobs/{job_id}/timeline API endpoints after the UI switches.
+APIs / Interfaces / Contracts
+
+New negotiate route (proposed): POST /signalr/negotiate (or /jobs/{job_id}/signalr/negotiate), Auth0-protected. Request: { job_id }. Response: { url, accessToken, hub: "status", groups: [ "job:<job_id>:user:<user_id>" ], history: { latest_status, timeline_events, meta } }.
+SignalR hub name: status.
+Groups: job:<job_id>:user:<user_id> (primary), optionally also user:<user_id> for multi-job pages later. Drop/ignore events missing user_id.
+Message schema sent over SignalR (JSON target + arguments):
+target: "status.latest"; args: { job_id, stage, artifact, message, cycle, details, ts }
+target: "timeline.event"; args: { job_id, event: { stage, message, artifact, ts, cycle, details } }
+Optional bulk on reconnect: target: "timeline.bulk"; args: { job_id, events: [...], meta: {...} }
+Removed endpoints: GET /jobs/{job_id}/status, GET /jobs/{job_id}/timeline (UI must no longer call them).
+Implementation Steps (decision-complete)
+
+Infra (Terraform)
+
+Add azurerm_signalr_service (Standard, serverless) to infra/terraform/modules (new module) and wire from main.tf.
+Export primary connection string to Key Vault (new secret, e.g., signalr-connection-string) and expose as env var AzureSignalRConnectionString to the status Function app and the API app (for negotiation).
+Add module variables/outputs (name, sku, connection secret id) and set defaults (e.g., name ${name_prefix}-signalr, capacity 1).
+Pass AzureSignalRConnectionString into functions_env and api_env in main.tf. Update .env, ui/.env, and GitHub workflow build args to include the negotiate URL if needed.
+Status ingest + broadcast (Functions)
+
+In function_app.py, keep writing to StatusTableStore (for durable history).
+Add SignalR output binding (hub status) to the Service Bus trigger to emit two messages per incoming payload:
+status.latest (latest snapshot) targeting group job:<job_id>:user:<user_id>.
+timeline.event for the same payload (preserve existing ts, cycle, and parsed details).
+Normalize payloads into the UI’s existing StatusResponse and timeline event shapes (reuse _parse_stage_message logic from API to populate parsed_message into details).
+Guard: if user_id missing, skip broadcast (or send only to job:<job_id> with a WARN log).
+Add retry/logging around SignalR send failures without breaking Table writes.
+Negotiate endpoint
+
+Implement in API (jobs.py) or new HTTP Function (pick one; API recommended to reuse Auth0 deps):
+Require Auth0 bearer token; resolve user_id from token and ensure the job exists for that user via DocumentIndexStore.
+Build group list ["job:<job_id>:user:<user_id>"].
+Use AzureSignalRConnectionString to generate connection info (SignalR serverless negotiate flow).
+Query StatusTableStore for latest(job_id) and timeline(job_id); include parsed details/meta (stage_order, expected_cycles) in the response as history.
+Return { url, accessToken, hub: "status", groups, history }.
+Add auth failure responses (401/403) and 404 if job not found.
+UI: consume SignalR, remove polling
+
+Add SignalR client (@microsoft/signalr) helper in signalr.ts to:
+Call negotiate endpoint with Auth0 access token.
+Initialize connection to the provided url/accessToken, join hub status.
+Seed UI state with history.latest_status + history.timeline_events.
+Subscribe to status.latest and timeline.event targets to update state; handle timeline.bulk on reconnect.
+Implement reconnect/backoff and idempotent event handling (order by ts, ignore duplicates by stage+ts).
+Update page.tsx to:
+Replace interval polling and fetchJobStatus/fetchJobTimeline calls with the SignalR hook.
+Initialize state from the negotiate history; maintain live timeline and status from SignalR callbacks.
+Remove imports/usage of fetchJobStatus/fetchJobTimeline.
+Remove now-unused API helpers from api.ts and adjust any components relying on them.
+Add UI error handling banner when SignalR disconnects; optionally offer a “retry” button.
+Cleanup & docs
+
+Remove /jobs/{job_id}/status and /jobs/{job_id}/timeline routes, schemas, and tests from FastAPI once UI is switched.
+Update README to describe SignalR setup, new negotiate route, and environment variables.
+Add Terraform docs for the new SignalR resource and secret wiring.
+Test Cases / Scenarios
+
+Negotiation:
+401 without/invalid Auth0 token; 404 for a job not owned by the user; 200 returns connection info + history for a valid user/job.
+SignalR broadcast:
+A status event with user_id publishes to the correct group; client receives status.latest and timeline.event with expected fields.
+Event without user_id: verify logged warning and no delivery (or delivery to job-only if implemented).
+Reconnect after temporary network drop receives timeline.bulk (if implemented) without losing events.
+UI behavior:
+On page load, timeline renders from history without waiting for live events.
+Live updates animate into the timeline and summary cards; duplicates ignored.
+Disconnect/reconnect shows banner and recovers gracefully.
+Persistence:
+StatusTable still records events; history matches streamed events.
+Assumptions / Defaults
+
+Keep Table Storage writes for durability and use it to build the initial history snapshot (user chose “Durable catch-up”).
+User-scoped routing: only users owning the job receive its events (group job:<job_id>:user:<user_id>).
+Azure SignalR Service runs in serverless mode with connection string auth; managed identity is not required for messaging.
+All status topic messages include job_id and usually user_id; if user_id is missing, we either drop or job-broadcast with a warning.
