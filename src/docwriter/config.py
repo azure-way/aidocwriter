@@ -81,6 +81,9 @@ class Settings:
     review_cohesion_batch_size: int = 5
     review_summary_batch_size: int = 5
     review_max_prompt_tokens: int = 15000
+    review_style_enabled: bool = True
+    review_cohesion_enabled: bool = True
+    review_summary_enabled: bool = True
 
     # Behavior
     request_timeout_s: int = 120
@@ -139,6 +142,9 @@ class Settings:
             review_cohesion_batch_size=_coerce_int(env.get("DOCWRITER_REVIEW_COHESION_BATCH_SIZE"), cls.review_cohesion_batch_size),
             review_summary_batch_size=_coerce_int(env.get("DOCWRITER_REVIEW_SUMMARY_BATCH_SIZE"), cls.review_summary_batch_size),
             review_max_prompt_tokens=_coerce_int(env.get("DOCWRITER_REVIEW_MAX_PROMPT_TOKENS"), cls.review_max_prompt_tokens),
+            review_style_enabled=_coerce_bool(env.get("DOCWRITER_REVIEW_STYLE_ENABLED"), cls.review_style_enabled),
+            review_cohesion_enabled=_coerce_bool(env.get("DOCWRITER_REVIEW_COHESION_ENABLED"), cls.review_cohesion_enabled),
+            review_summary_enabled=_coerce_bool(env.get("DOCWRITER_REVIEW_SUMMARY_ENABLED"), cls.review_summary_enabled),
             request_timeout_s=_coerce_int(env.get("DOCWRITER_REQUEST_TIMEOUT_S"), cls.request_timeout_s),
             max_section_tokens=_coerce_int(env.get("DOCWRITER_MAX_SECTION_TOKENS"), cls.max_section_tokens),
             streaming=_coerce_bool(env.get("DOCWRITER_STREAM"), cls.streaming),
