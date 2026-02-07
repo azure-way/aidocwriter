@@ -917,6 +917,12 @@ def process_review_style(data: Dict[str, Any], style_agent: StyleReviewerAgent |
         return
     cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
     progress = _load_review_progress(job_paths, cycle_idx)
+    # Short-circuit: style reviewer disabled
+    publish_stage_event(agent_stage, "SKIPPED", data, extra={"message": "Style review disabled; skipping"})
+    progress["style"]["done"] = True
+    _persist_review_progress(job_paths, cycle_idx, progress)
+    send_queue_message(settings.sb_queue_review_cohesion, _strip_review_payload(data))
+    return
     if progress["style"].get("done"):
         publish_stage_event(agent_stage, "DONE", data, extra={"message": "Style review already complete; forwarding to cohesion"})
         send_queue_message(settings.sb_queue_review_cohesion, _strip_review_payload(data))
@@ -1044,6 +1050,12 @@ def process_review_cohesion(data: Dict[str, Any], cohesion_agent: CohesionReview
         return
     cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
     progress = _load_review_progress(job_paths, cycle_idx)
+    # Short-circuit: cohesion reviewer disabled
+    publish_stage_event(agent_stage, "SKIPPED", data, extra={"message": "Cohesion review disabled; skipping"})
+    progress["cohesion"]["done"] = True
+    _persist_review_progress(job_paths, cycle_idx, progress)
+    send_queue_message(settings.sb_queue_review_summary, _strip_review_payload(data))
+    return
     if progress["cohesion"].get("done"):
         publish_stage_event(agent_stage, "DONE", data, extra={"message": "Cohesion review already complete; forwarding to summary"})
         send_queue_message(settings.sb_queue_review_summary, _strip_review_payload(data))
@@ -1169,6 +1181,25 @@ def process_review_summary(data: Dict[str, Any], summary_agent: SummaryReviewerA
         return
     cycle_idx = min(cycle_state.requested, cycle_state.completed + 1)
     progress = _load_review_progress(job_paths, cycle_idx)
+    # Short-circuit: summary reviewer disabled
+    progress["summary"]["done"] = True
+    _persist_review_progress(job_paths, cycle_idx, progress)
+    review_tokens = int(progress.get("tokens_total") or 0)
+    publish_stage_event(agent_stage, "SKIPPED", data, extra={"message": "Executive summary review disabled; skipping"})
+    publish_stage_event("REVIEW", "DONE", data, extra={"message": "Review completed (style/cohesion/summary disabled)"})
+    send_queue_message(settings.sb_queue_verify, _strip_review_payload(data))
+    publish_status(
+        _stage_completed_event(
+            data["job_id"],
+            "REVIEW",
+            StageTiming(job_id=data["job_id"], stage="REVIEW", cycle=cycle_idx, start=time.perf_counter(), duration_s=0.0),
+            artifact=job_paths.cycle(cycle_idx, "review.json"),
+            tokens=review_tokens,
+            model=settings.reviewer_model,
+            source=data,
+        )
+    )
+    return
     if progress["summary"].get("done"):
         publish_stage_event(agent_stage, "DONE", data, extra={"message": "Summary review already complete; forwarding to verify"})
         review_tokens = int(progress.get("tokens_total") or 0)
