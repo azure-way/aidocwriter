@@ -78,14 +78,10 @@ const REVIEW_SUBSTEP_LABELS: Record<string, string> = {
   REWRITE: "Rewrite",
 };
 
-const REVIEW_SUBSTAGES = [
-  "REVIEW_GENERAL",
-  "REVIEW_STYLE",
-  "REVIEW_COHESION",
-  "REVIEW_SUMMARY",
-  "VERIFY",
-  "REWRITE",
-] as const;
+const reviewStyleEnabled = process.env.NEXT_PUBLIC_REVIEW_STYLE_ENABLED !== "false";
+const reviewCohesionEnabled = process.env.NEXT_PUBLIC_REVIEW_COHESION_ENABLED !== "false";
+const reviewSummaryEnabled = process.env.NEXT_PUBLIC_REVIEW_SUMMARY_ENABLED !== "false";
+const REVIEW_SUBSTAGES_BASE: string[] = ["REVIEW_GENERAL", "VERIFY", "REWRITE"];
 
 export function JobDashboard({ initialJobId }: JobDashboardProps) {
   const { user, isLoading: authLoading, error: authError } = useUser();
@@ -104,6 +100,14 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
   const [error, setError] = useState<string | null>(null);
   const [artifactNotice, setArtifactNotice] = useState<string | null>(null);
   const noticeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const enabledReviewSubstages = useMemo(() => {
+    const list: string[] = ["REVIEW_GENERAL"];
+    if (reviewStyleEnabled) list.push("REVIEW_STYLE");
+    if (reviewCohesionEnabled) list.push("REVIEW_COHESION");
+    if (reviewSummaryEnabled) list.push("REVIEW_SUMMARY");
+    list.push("VERIFY", "REWRITE");
+    return list;
+  }, []);
 
   const clearNotice = useCallback(() => {
     if (noticeTimeoutRef.current) {
@@ -432,6 +436,15 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
 
     return stageOrder.map((stage) => {
       const base = normalizeStageName(stage);
+      if (base === "REVIEW_STYLE" && !reviewStyleEnabled) {
+        return null;
+      }
+      if (base === "REVIEW_COHESION" && !reviewCohesionEnabled) {
+        return null;
+      }
+      if (base === "REVIEW_SUMMARY" && !reviewSummaryEnabled) {
+        return null;
+      }
       const related = stageEventsByBase.get(base)
         ? [...stageEventsByBase.get(base)!].sort((a, b) => {
             const ta = Number(a.ts ?? 0);
@@ -591,7 +604,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
         } as TimelineEvent,
         related
       );
-    });
+    }).filter((event): event is TimelineEvent => Boolean(event));
   }, [applyStageAggregation, formatStage, sortedTimeline, stageOrder]);
 
   const summaryEventsToRender = useMemo(() => {
@@ -1011,7 +1024,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
         const tb = Number(b.ts ?? 0);
         return ta - tb;
       });
-      const substeps = REVIEW_SUBSTAGES.map((stageBase) => {
+      const substeps = enabledReviewSubstages.map((stageBase) => {
         const label = REVIEW_SUBSTEP_LABELS[stageBase] ?? formatStage(stageBase);
         const detail = buildDetail(stageBase, cycle, sortedEvents) || defaultDetail(stageBase, cycle);
         return {
