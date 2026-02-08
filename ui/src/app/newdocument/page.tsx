@@ -14,6 +14,7 @@ import {
   fetchJobTimeline,
   downloadArtifact,
   downloadDiagramArchive,
+  fetchDocuments,
   resumeJob,
 } from "@/lib/api";
 import {
@@ -99,6 +100,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [artifactNotice, setArtifactNotice] = useState<string | null>(null);
+  const [documentTitle, setDocumentTitle] = useState<string | null>(null);
   const noticeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const enabledReviewSubstages = useMemo(() => {
     const list: string[] = ["REVIEW_GENERAL"];
@@ -139,6 +141,33 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
     clearNotice();
     setJobId((prev) => (prev === initialJobId ? prev : initialJobId));
   }, [initialJobId, clearNotice]);
+
+  useEffect(() => {
+    if (!title.trim()) {
+      return;
+    }
+    setDocumentTitle(title.trim());
+  }, [title]);
+
+  useEffect(() => {
+    if (!jobId || documentTitle) return;
+    let cancelled = false;
+    async function loadTitle() {
+      try {
+        const docs = await fetchDocuments();
+        const match = (docs?.documents ?? []).find((doc) => doc.job_id === jobId);
+        if (!cancelled && match?.title) {
+          setDocumentTitle(match.title.trim());
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    loadTitle();
+    return () => {
+      cancelled = true;
+    };
+  }, [jobId, documentTitle]);
 
   useEffect(() => {
     if (!jobId) return;
@@ -208,6 +237,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
         audience: audience.trim(),
         cycles,
       });
+      setDocumentTitle(title.trim());
       const id = response.job_id as string;
       await resumeJob(id, trimmedAnswers);
       setJobId(id);
@@ -243,6 +273,16 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
     if (!stage) return "";
     return stage.replace(/_(DONE|START|QUEUED|FAILED|ERROR|IN_PROGRESS)$/u, "");
   }, []);
+
+  const resolveFileBaseName = useCallback(
+    (fallback?: string | null) => {
+      const raw =
+        (documentTitle && documentTitle.trim()) || (title && title.trim()) || (fallback ?? "");
+      const safe = raw || "artifact";
+      return safe.replace(/\s+/g, "-");
+    },
+    [documentTitle, title]
+  );
 
   const stageOrder = useMemo(() => {
     const canonical = SUMMARY_STAGE_ORDER;
@@ -705,8 +745,8 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
       try {
         const { blob, fileName, contentType } = await downloadArtifact(job, path);
         const rawName = (fileName || path.split("/").pop() || "artifact").trim();
-        const existingExt = rawName.match(/\\.([^.\\s/]+)$/)?.[1];
-        const pathExt = path.match(/\\.([^.\\s/]+)$/)?.[1];
+        const existingExt = rawName.match(/\.([^\.\s/]+)$/)?.[1];
+        const pathExt = path.match(/\.([^\.\s/]+)$/)?.[1];
         const typeExtMap: Record<string, string> = {
           "application/pdf": "pdf",
           "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
@@ -715,7 +755,8 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
         };
         const typeExt = contentType ? typeExtMap[contentType.split(";")[0]?.trim().toLowerCase() || ""] : undefined;
         const ext = existingExt || pathExt || typeExt || "";
-        const resolvedName = ext ? `${job}.${ext}` : rawName;
+        const baseName = resolveFileBaseName(job);
+        const resolvedName = ext ? `${baseName}.${ext}` : baseName;
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = url;
@@ -730,7 +771,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
         setError("Failed to download artifact");
       }
     },
-    [showNotice]
+    [showNotice, resolveFileBaseName]
   );
 
   const downloadDiagramArchiveFile = useCallback(
@@ -740,8 +781,9 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
         return;
       }
       try {
-        const { blob, fileName } = await downloadDiagramArchive(job);
-        const resolvedName = (fileName || `${job}-diagrams.zip`).trim();
+        const { blob } = await downloadDiagramArchive(job);
+        const baseName = resolveFileBaseName(job);
+        const resolvedName = `${baseName}-diagrams.zip`;
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = url;
@@ -756,7 +798,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
         setError("Failed to download diagram archive");
       }
     },
-    [showNotice]
+    [showNotice, resolveFileBaseName]
   );
 
   const renderArtifactActions = useCallback(
@@ -767,7 +809,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
       const badgeClass =
         "rounded-full bg-indigo-50 px-2 py-[2px] text-[10px] font-semibold uppercase tracking-[0.3em] text-indigo-500";
       const buttonClass =
-        "rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-slate-600 shadow hover:bg-white";
+        "rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-slate-600 shadow hover:bg-white cursor-pointer";
       const containerClass = size === "sm" ? "mt-2 space-y-2 pl-2" : "mt-3 space-y-3";
       const hasMarkdown = fileName.toLowerCase().endsWith(".md");
       const basePath = hasMarkdown ? path.replace(/\.[^/.]+$/, "") : path;
@@ -777,16 +819,8 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
             { label: "Markdown", display: fileName, artifactPath: path },
             ...(allowRichFormats
               ? [
-                  {
-                    label: "PDF",
-                    display: fileName.replace(/\.md$/i, ".pdf"),
-                    artifactPath: `${basePath}.pdf`,
-                  },
-                  {
-                    label: "Word",
-                    display: fileName.replace(/\.md$/i, ".docx"),
-                    artifactPath: `${basePath}.docx`,
-                  },
+                  { label: "PDF", display: "PDF", artifactPath: `${basePath}.pdf` },
+                  { label: "Word", display: "Word", artifactPath: `${basePath}.docx` },
                 ]
               : []),
           ]
@@ -796,37 +830,54 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
 
       return (
         <div className={containerClass}>
-          {variants.map(({ label: variantLabel, display, artifactPath }) => (
-            <div key={`${artifactPath}-${variantLabel ?? "default"}`} className="flex flex-wrap items-center gap-2">
-              <span className={chipClass}>
-                {display}
-                {variantLabel ? <span className={badgeClass}>{variantLabel}</span> : null}
-              </span>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className={buttonClass}
-                  onClick={() => downloadArtifactFile(jobId, artifactPath)}
-                >
-                  Download
-                </button>
-              </div>
+          {allowRichFormats && hasMarkdown ? (
+            <div className="flex flex-wrap gap-2">
+              {[...variants, ...(showDiagramAssets ? [{ label: "Diagrams", artifactPath: "diagrams" }] : [])].map(
+                ({ label: variantLabel, artifactPath }) => {
+                  if (variantLabel === "Diagrams") {
+                    return (
+                      <button
+                        key="diagram-assets"
+                        type="button"
+                        className={buttonClass}
+                        onClick={() => downloadDiagramArchiveFile(jobId)}
+                      >
+                        Download diagram assets
+                      </button>
+                    );
+                  }
+                  return (
+                    <button
+                      key={`${artifactPath}-${variantLabel ?? "default"}`}
+                      type="button"
+                      className={buttonClass}
+                      onClick={() => downloadArtifactFile(jobId, artifactPath)}
+                    >
+                      {variantLabel ? `Download ${variantLabel}` : "Download"}
+                    </button>
+                  );
+                }
+              )}
             </div>
-          ))}
-          {showDiagramAssets ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={chipClass}>Diagram assets</span>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className={buttonClass}
-                  onClick={() => downloadDiagramArchiveFile(jobId)}
-                >
-                  Download ZIP
-                </button>
+          ) : (
+            variants.map(({ label: variantLabel, display, artifactPath }) => (
+              <div key={`${artifactPath}-${variantLabel ?? "default"}`} className="flex flex-wrap items-center gap-2">
+                <span className={chipClass}>
+                  {display}
+                  {variantLabel ? <span className={badgeClass}>{variantLabel}</span> : null}
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className={buttonClass}
+                    onClick={() => downloadArtifactFile(jobId, artifactPath)}
+                  >
+                    Download
+                  </button>
+                </div>
               </div>
-            </div>
-          ) : null}
+            ))
+          )}
         </div>
       );
     },

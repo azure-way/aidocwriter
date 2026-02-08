@@ -50,6 +50,11 @@ export default function WorkspacePage() {
   const [stageFilter, setStageFilter] = useState<StageFilter>("all");
   const [resumeJobId, setResumeJobId] = useState<string | null>(null);
   const totalStages = SUMMARY_STAGE_ORDER.length;
+  const resolveFileBaseName = useCallback((doc?: DocumentSummary, fallback?: string) => {
+    const raw = (doc?.title && doc.title.trim()) || (fallback ?? "");
+    const safe = raw || "artifact";
+    return safe.replace(/\s+/g, "-");
+  }, []);
 
   const refreshDocuments = useCallback(async () => {
     if (!user?.sub) {
@@ -87,12 +92,12 @@ export default function WorkspacePage() {
     [refreshDocuments]
   );
 
-  const downloadArtifactFile = useCallback(async (jobId: string, path: string) => {
+  const downloadArtifactFile = useCallback(async (doc: DocumentSummary, path: string) => {
     try {
-      const { blob, fileName, contentType } = await downloadArtifact(jobId, path);
+      const { blob, fileName, contentType } = await downloadArtifact(doc.job_id, path);
       const rawName = (fileName || path.split("/").pop() || "artifact").trim();
-      const existingExt = rawName.match(/\\.([^.\\s/]+)$/)?.[1];
-      const pathExt = path.match(/\\.([^.\\s/]+)$/)?.[1];
+      const existingExt = rawName.match(/\.([^\.\s/]+)$/)?.[1];
+      const pathExt = path.match(/\.([^\.\s/]+)$/)?.[1];
       const typeExtMap: Record<string, string> = {
         "application/pdf": "pdf",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
@@ -101,7 +106,8 @@ export default function WorkspacePage() {
       };
       const typeExt = contentType ? typeExtMap[contentType.split(";")[0]?.trim().toLowerCase() || ""] : undefined;
       const ext = existingExt || pathExt || typeExt || "";
-      const resolvedName = ext ? `${jobId}.${ext}` : rawName;
+      const baseName = resolveFileBaseName(doc, doc.job_id);
+      const resolvedName = ext ? `${baseName}.${ext}` : baseName;
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -113,12 +119,13 @@ export default function WorkspacePage() {
     } catch (err) {
       console.error(err);
     }
-  }, []);
+  }, [resolveFileBaseName]);
 
-  const downloadDiagramArchiveFile = useCallback(async (jobId: string) => {
+  const downloadDiagramArchiveFile = useCallback(async (doc: DocumentSummary) => {
     try {
-      const { blob, fileName } = await downloadDiagramArchive(jobId);
-      const resolvedName = (fileName || `${jobId}-diagrams.zip`).trim();
+      const { blob } = await downloadDiagramArchive(doc.job_id);
+      const baseName = `${resolveFileBaseName(doc, doc.job_id)}-diagrams`;
+      const resolvedName = `${baseName}.zip`;
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -130,7 +137,7 @@ export default function WorkspacePage() {
     } catch (err) {
       console.error(err);
     }
-  }, []);
+  }, [resolveFileBaseName]);
 
   const filteredDocuments = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -274,7 +281,7 @@ export default function WorkspacePage() {
                       <button
                         type="button"
                         className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400"
-                        onClick={() => downloadArtifactFile(doc.job_id, doc.artifact!)}
+                        onClick={() => downloadArtifactFile(doc, doc.artifact!)}
                       >
                         Download artifact
                       </button>
@@ -283,7 +290,7 @@ export default function WorkspacePage() {
                       <button
                         type="button"
                         className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400"
-                        onClick={() => downloadDiagramArchiveFile(doc.job_id)}
+                        onClick={() => downloadDiagramArchiveFile(doc)}
                       >
                         Download diagrams
                       </button>
