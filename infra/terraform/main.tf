@@ -193,7 +193,11 @@ module "app" {
   }
 
   ui_images = {
-    ui = "${module.container_registry.url}/docwriter-ui:${var.docker_image_version}"
+    ui = {
+      image        = "${module.container_registry.url}/docwriter-ui:${var.docker_image_version}"
+      min_replicas = 1
+      max_replicas = 3
+    }
   }
 
   ui_ports = {

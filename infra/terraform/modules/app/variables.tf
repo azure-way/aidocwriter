@@ -39,7 +39,11 @@ variable "api_ports" {
 
 variable "ui_images" {
   description = "Map of UI container images"
-  type        = map(string)
+  type = map(object({
+    image        = string
+    min_replicas = optional(number, 1)
+    max_replicas = optional(number, 1)
+  }))
   default     = {}
 }
 

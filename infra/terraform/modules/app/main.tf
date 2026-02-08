@@ -110,11 +110,16 @@ resource "azurerm_container_app" "ui" {
   }
 
   template {
+    min_replicas = try(each.value.min_replicas, 1)
+    max_replicas = try(each.value.max_replicas, 1)
+
     container {
       name   = each.key
-      image  = each.value
+      image  = each.value.image
       cpu    = 0.5
       memory = "1Gi"
+
+      
 
 
       dynamic "env" {
