@@ -155,7 +155,9 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
     async function loadTitle() {
       try {
         const docs = await fetchDocuments();
-        const match = (docs?.documents ?? []).find((doc) => doc.job_id === jobId);
+        const match = (docs?.documents ?? []).find(
+          (doc: { job_id?: string; title?: string | null }) => doc.job_id === jobId
+        );
         if (!cancelled && match?.title) {
           setDocumentTitle(match.title.trim());
         }
