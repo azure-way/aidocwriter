@@ -7,26 +7,32 @@ const documents = [
   {
     title: "Azure Governance Approach",
     slug: "azure-governance-approach",
-    summary: "Landing zones, guardrails, and operating model guidance for enterprise Azure programs.",
-    highlights: ["Landing zones", "Policy-driven guardrails", "Operational excellence"],
+    summary: "CAF-aligned governance blueprint covering the operating model, guardrails, identity, networking, and resilience.",
+    highlights: ["CAF alignment", "Operating model", "Guardrails & controls"],
   },
   {
     title: "Azure Integration Services - Basic Summary",
     slug: "azure-integration-services-basic-summary",
-    summary: "Core services for APIs, messaging, and workflows with a concise integration blueprint.",
-    highlights: ["API Management", "Service Bus", "Logic Apps"],
+    summary: "Structured AIS guide covering component landscape, reader pathways, and when-to-use integration styles with security notes.",
+    highlights: ["Component landscape", "Reader pathways", "Integration styles & security"],
   },
   {
     title: "Azure Network Security",
     slug: "azure-network-security",
-    summary: "Defense-in-depth overview including perimeter, segmentation, and identity-aware controls.",
-    highlights: ["Zero Trust", "Segmentation", "Threat protection"],
+    summary: "Threat-model driven reference architectures with centralized inspection, controls checklists, and audit evidence.",
+    highlights: ["Threat model", "Hub-spoke inspection", "Controls & audit"],
   },
   {
     title: "Hosting Containers Across Different Cloud Providers",
     slug: "hosting-containers-across-different-cloud-providers",
-    summary: "Portable container hosting patterns to run consistently across Azure, AWS, and GCP.",
-    highlights: ["Kubernetes", "Portability", "Multi-cloud governance"],
+    summary: "Multi-cloud container strategy with design principles, risk mitigations, and operational checklists for Kubernetes workloads.",
+    highlights: ["Design principles", "Risk mitigations", "Operational checklist"],
+  },
+  {
+    title: "Release Management and Branching Policy",
+    slug: "release-management-and-branching-policy",
+    summary: "Governed release and branching standard with audit-ready checklists, RACI, and SLIs/SLOs for delivery teams.",
+    highlights: ["Branching policy", "Audit trail & RACI", "SLIs/SLOs"],
   },
 ];
 
