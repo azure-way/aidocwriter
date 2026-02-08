@@ -64,12 +64,6 @@ const SUMMARY_STAGE_ORDER = [
   "FINALIZE",
 ];
 
-const SUBSTEP_LABELS: Record<string, string> = {
-  REVIEW: "Review",
-  VERIFY: "Verify",
-  REWRITE: "Rewrite",
-};
-
 const REVIEW_SUBSTEP_LABELS: Record<string, string> = {
   REVIEW_GENERAL: "General review",
   REVIEW_STYLE: "Style review",
@@ -82,7 +76,6 @@ const REVIEW_SUBSTEP_LABELS: Record<string, string> = {
 const reviewStyleEnabled = process.env.NEXT_PUBLIC_REVIEW_STYLE_ENABLED !== "false";
 const reviewCohesionEnabled = process.env.NEXT_PUBLIC_REVIEW_COHESION_ENABLED !== "false";
 const reviewSummaryEnabled = process.env.NEXT_PUBLIC_REVIEW_SUMMARY_ENABLED !== "false";
-const REVIEW_SUBSTAGES_BASE: string[] = ["REVIEW_GENERAL", "VERIFY", "REWRITE"];
 
 export function JobDashboard({ initialJobId }: JobDashboardProps) {
   const { user, isLoading: authLoading, error: authError } = useUser();
@@ -994,7 +987,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
       result.set(stageBase, stageDetails);
     });
     return result;
-  }, [groupedTimeline.cycles, getMetadataEntries]);
+  }, [computeStageDurationSeconds, groupedTimeline.cycles, getMetadataEntries]);
 
   const combinedReviewCycles = useMemo<CombinedCycleDetail[]>(() => {
     const defaultDetail = (stageBase: string, cycle: number): StageCycleDetail => ({
@@ -1088,7 +1081,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
       });
       return { cycle, substeps };
     });
-  }, [baseStageName, formatStage, getMetadataEntries, groupedTimeline.cycles]);
+  }, [baseStageName, enabledReviewSubstages, formatStage, getMetadataEntries, groupedTimeline.cycles]);
 
   const [expandedCycles, setExpandedCycles] = useState<Record<number, boolean>>({});
   const [expandedSubsteps, setExpandedSubsteps] = useState<Record<number, Record<string, boolean>>>({});

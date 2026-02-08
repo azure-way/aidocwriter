@@ -1,0 +1,31 @@
+DocWriter Studio
+
+Summary:
+DocWriter Studio is an Azure-first AI documentation platform that orchestrates intake, planning, writing, review, verification, and diagramming agents. It produces audit-ready technical documents, diagrams, and downloadable artifacts for enterprise teams.
+
+Key capabilities:
+- AI-guided intake and planning workflows
+- Multi-stage writing, review, and verification
+- Automated PlantUML diagram preparation and rendering
+- Artifact management for Markdown, PDF, DOCX, and diagrams
+- Azure-native telemetry and governance visibility
+
+Target audience:
+- Enterprise architects and platform teams
+- Governance and compliance leaders
+- Technical writing and documentation programs
+
+Important URLs:
+- https://docwriter-studio.azureway.cloud/
+- https://docwriter-studio.azureway.cloud/features
+- https://docwriter-studio.azureway.cloud/sample-documents
+
+Reference documents (PDF samples):
+- https://docwriter-studio.azureway.cloud/sample-documents/azure-governance-approach.pdf
+- https://docwriter-studio.azureway.cloud/sample-documents/azure-integration-services-basic-summary.pdf
+- https://docwriter-studio.azureway.cloud/sample-documents/azure-network-security.pdf
+- https://docwriter-studio.azureway.cloud/sample-documents/hosting-containers-across-different-cloud-providers.pdf
+- https://docwriter-studio.azureway.cloud/sample-documents/release-management-and-branching-policy.pdf
+
+How to cite:
+DocWriter Studio, https://docwriter-studio.azureway.cloud/

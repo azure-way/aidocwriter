@@ -5,8 +5,49 @@ import { AuthControls } from "@/components/auth/AuthControls";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "DocWriter Studio",
-  description: "Large-scale AI document generation orchestrated via Azure queues",
+  metadataBase: new URL("https://docwriter-studio.azureway.cloud"),
+  title: {
+    default: "DocWriter Studio",
+    template: "%s | DocWriter Studio",
+  },
+  description: "AI-orchestrated Azure documentation studio for enterprise-grade technical documents and governance-ready deliverables.",
+  keywords: [
+    "DocWriter Studio",
+    "AI documentation",
+    "Azure documentation",
+    "technical writing automation",
+    "enterprise documentation",
+    "PlantUML automation",
+    "document generation",
+  ],
+  category: "technology",
+  applicationName: "DocWriter Studio",
+  creator: "AzureWay",
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    type: "website",
+    siteName: "DocWriter Studio",
+    title: "DocWriter Studio",
+    description: "AI-orchestrated Azure documentation studio for enterprise-grade technical documents and governance-ready deliverables.",
+    url: "/",
+    images: [
+      {
+        url: "/opengraph-image",
+        width: 1200,
+        height: 630,
+        alt: "DocWriter Studio",
+      },
+    ],
+    locale: "en_US",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "DocWriter Studio",
+    description: "AI-orchestrated Azure documentation studio for enterprise-grade technical documents and governance-ready deliverables.",
+    images: ["/twitter-image"],
+  },
 };
 
 const navItems = [

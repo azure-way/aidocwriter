@@ -1,4 +1,22 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+
+export const metadata: Metadata = {
+  title: "DocWriter Studio",
+  description: "Large-scale AI document creation orchestrated with Azure-native services and specialized agents.",
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    title: "DocWriter Studio",
+    description: "Large-scale AI document creation orchestrated with Azure-native services and specialized agents.",
+    url: "/",
+  },
+  twitter: {
+    title: "DocWriter Studio",
+    description: "Large-scale AI document creation orchestrated with Azure-native services and specialized agents.",
+  },
+};
 
 const benefits = [
   {
@@ -42,9 +60,90 @@ const capabilities = [
   },
 ];
 
+const faqItems = [
+  {
+    question: "What is DocWriter Studio?",
+    answer: "DocWriter Studio is an Azure-first platform that orchestrates AI agents to produce technical documents, diagrams, and final deliverables.",
+  },
+  {
+    question: "Who is it for?",
+    answer: "It is built for enterprise teams, architects, and governance leaders who need reliable, audit-ready documentation at scale.",
+  },
+  {
+    question: "What outputs does it generate?",
+    answer: "It produces Markdown, PDF, DOCX, PlantUML diagrams, and structured artifacts for each document run.",
+  },
+  {
+    question: "Why is the architecture Azure-first?",
+    answer: "DocWriter uses Azure Service Bus, Functions, Storage, and Tables to align with enterprise governance and security requirements.",
+  },
+  {
+    question: "How does licensing work?",
+    answer: "Individuals can use DocWriter Studio for free, while companies require a paid license with support and governance options.",
+  },
+];
+
 export default function HomePage() {
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://docwriter-studio.azureway.cloud/#organization",
+        name: "DocWriter Studio",
+        url: "https://docwriter-studio.azureway.cloud",
+      },
+      {
+        "@type": "WebSite",
+        "@id": "https://docwriter-studio.azureway.cloud/#website",
+        url: "https://docwriter-studio.azureway.cloud",
+        name: "DocWriter Studio",
+        publisher: {
+          "@id": "https://docwriter-studio.azureway.cloud/#organization",
+        },
+      },
+      {
+        "@type": "SoftwareApplication",
+        "@id": "https://docwriter-studio.azureway.cloud/#software",
+        name: "DocWriter Studio",
+        applicationCategory: "BusinessApplication",
+        operatingSystem: "Web",
+        offers: [
+          {
+            "@type": "Offer",
+            name: "Individual use",
+            price: "0",
+            priceCurrency: "USD",
+          },
+          {
+            "@type": "Offer",
+            name: "Company use",
+            description: "Contact sales for enterprise pricing.",
+          },
+        ],
+      },
+      {
+        "@type": "FAQPage",
+        "@id": "https://docwriter-studio.azureway.cloud/#faq",
+        mainEntity: faqItems.map((item) => ({
+          "@type": "Question",
+          name: item.question,
+          acceptedAnswer: {
+            "@type": "Answer",
+            text: item.answer,
+          },
+        })),
+      },
+    ],
+  };
+
   return (
     <div className="space-y-24">
+      <script
+        type="application/ld+json"
+        // JSON-LD must be a raw string for crawlers.
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
       <section className="space-y-12 rounded-[32px] border border-white/20 bg-gradient-to-br from-slate-900 via-blue-900 to-sky-700 p-10 text-white shadow-[0_45px_140px_rgba(15,23,42,0.45)]">
         <div className="grid gap-12 lg:grid-cols-[1.1fr_0.9fr]">
           <div className="space-y-8">
@@ -131,6 +230,21 @@ export default function HomePage() {
               <article key={capability.label} className="rounded-3xl bg-white/85 p-6 text-slate-900 shadow-[0_35px_90px_rgba(15,23,42,0.35)]">
                 <h3 className="text-xl font-semibold">{capability.label}</h3>
                 <p className="mt-3 text-base text-slate-600">{capability.copy}</p>
+              </article>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-6 rounded-3xl border border-white/20 bg-white/10 p-8">
+          <div>
+            <p className="text-xs uppercase tracking-[0.35em] text-white/70">FAQ</p>
+            <h2 className="mt-2 text-3xl font-semibold">Answers for search and evaluation</h2>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            {faqItems.map((item) => (
+              <article key={item.question} className="rounded-2xl bg-slate-900/35 p-5">
+                <h3 className="text-lg font-semibold text-white">{item.question}</h3>
+                <p className="mt-2 text-sm text-white/80">{item.answer}</p>
               </article>
             ))}
           </div>
