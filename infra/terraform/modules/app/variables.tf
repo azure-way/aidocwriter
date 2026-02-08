@@ -19,7 +19,11 @@ variable "container_registry_login" {
 }
 
 variable "api_images" {
-  type = map(string)
+  type = map(object({
+    image        = string
+    min_replicas = optional(number, 1)
+    max_replicas = optional(number, 1)
+  }))
 }
 
 variable "functions_images" {

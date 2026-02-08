@@ -183,8 +183,16 @@ module "app" {
 
   tags = var.tags
   api_images = {
-    api      = "${module.container_registry.url}/docwriter-api:${var.docker_image_version}"
-    plantuml = "${module.container_registry.url}/plantuml-server:${var.docker_image_version}"
+    api = {
+      image        = "${module.container_registry.url}/docwriter-api:${var.docker_image_version}"
+      min_replicas = 1
+      max_replicas = 1
+    }
+    plantuml = {
+      image        = "${module.container_registry.url}/plantuml-server:${var.docker_image_version}"
+      min_replicas = 1
+      max_replicas = 1
+    }
   }
 
   api_ports = {
