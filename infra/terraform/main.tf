@@ -101,6 +101,7 @@ resource "azurerm_key_vault_secret" "auth0_secret" {
   key_vault_id = azurerm_key_vault.rbac_example.id
 }
 
+
 resource "azurerm_role_assignment" "open_ai_key_secret_reader" {
   scope                = azurerm_key_vault_secret.open_ai_key.resource_versionless_id
   role_definition_name = "Key Vault Secrets User"
@@ -124,6 +125,7 @@ resource "azurerm_role_assignment" "auth0_secret_secret_reader" {
 
   depends_on = [module.storage]
 }
+
 
 module "monitoring" {
   source              = "./modules/monitoring"
@@ -306,7 +308,7 @@ module "app" {
       env_name            = "APPLICATIONINSIGHTS_CONNECTION_STRING"
       key_vault_secret_id = module.monitoring.app_insights_connection_string_kv_id
       identity            = azurerm_user_assigned_identity.ca_identity.id
-    }
+    },
   ]
 
   ui_env = {

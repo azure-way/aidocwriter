@@ -95,8 +95,19 @@ class Settings:
     blob_container: str = "docwriter"
     status_table_name: str = os.getenv("DOCWRITER_STATUS_TABLE", "DocWriterStatus")
     documents_table_name: str = os.getenv("DOCWRITER_DOCUMENTS_TABLE", "DocWriterDocuments")
+    company_profiles_table_name: str = os.getenv("DOCWRITER_COMPANY_PROFILES_TABLE", "DocWriterCompanyProfiles")
     auth0_issuer_base_url: str | None = None
     auth0_audience: str | None = None
+
+    # MCP (third-party)
+    mcp_base_url: str | None = None
+    mcp_token_url: str | None = None
+    mcp_client_id: str | None = None
+    mcp_client_secret: str | None = None
+    mcp_audience: str | None = None
+    mcp_access_token: str | None = None
+    mcp_resource_company_profile: str = "resources/company.profile"
+    mcp_tool_company_query: str = "tools/company.query"
 
     # OpenTelemetry (optional)
     otlp_endpoint: str | None = None
@@ -152,8 +163,17 @@ class Settings:
             blob_container=env.get("AZURE_BLOB_CONTAINER", cls.blob_container),
             status_table_name=env.get("DOCWRITER_STATUS_TABLE", cls.status_table_name),
             documents_table_name=env.get("DOCWRITER_DOCUMENTS_TABLE", cls.documents_table_name),
+            company_profiles_table_name=env.get("DOCWRITER_COMPANY_PROFILES_TABLE", cls.company_profiles_table_name),
             auth0_issuer_base_url=env.get("AUTH0_ISSUER_BASE_URL", cls.auth0_issuer_base_url),
             auth0_audience=env.get("AUTH0_AUDIENCE", cls.auth0_audience),
+            mcp_base_url=env.get("MCP_BASE_URL", cls.mcp_base_url),
+            mcp_token_url=env.get("MCP_TOKEN_URL", cls.mcp_token_url),
+            mcp_client_id=env.get("MCP_CLIENT_ID", cls.mcp_client_id),
+            mcp_client_secret=env.get("MCP_CLIENT_SECRET", cls.mcp_client_secret),
+            mcp_audience=env.get("MCP_AUDIENCE", cls.mcp_audience),
+            mcp_access_token=env.get("MCP_ACCESS_TOKEN", cls.mcp_access_token),
+            mcp_resource_company_profile=env.get("MCP_RESOURCE_COMPANY_PROFILE", cls.mcp_resource_company_profile),
+            mcp_tool_company_query=env.get("MCP_TOOL_COMPANY_QUERY", cls.mcp_tool_company_query),
             otlp_endpoint=env.get("OTEL_EXPORTER_OTLP_ENDPOINT"),
         )
 

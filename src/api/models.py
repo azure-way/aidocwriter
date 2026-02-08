@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class JobCreateRequest(BaseModel):
@@ -20,7 +20,7 @@ class ResumeRequest(BaseModel):
         description="Structured intake answers; if omitted existing Blob content is reused.",
     )
 
-    @validator("answers", pre=True)
+    @field_validator("answers", mode="before")
     def _empty_dict_becomes_none(cls, value):  # type: ignore[override]
         if value == {}:
             return None
@@ -96,3 +96,37 @@ class DocumentListEntry(BaseModel):
 
 class DocumentListResponse(BaseModel):
     documents: List[DocumentListEntry]
+
+
+class CompanyReference(BaseModel):
+    title: str
+    summary: str
+    outcome: Optional[str] = None
+    year: Optional[str] = None
+
+
+class CompanyProfile(BaseModel):
+    company_name: str
+    overview: str
+    capabilities: List[str]
+    industries: List[str]
+    certifications: List[str]
+    locations: List[str]
+    references: List[CompanyReference]
+
+
+class CompanyProfileRequest(BaseModel):
+    profile: CompanyProfile
+    mcp_config: Optional[Dict[str, str]] = None
+
+
+class CompanyProfileSource(BaseModel):
+    filename: str
+    blob_path: str
+
+
+class CompanyProfileResponse(BaseModel):
+    profile: CompanyProfile
+    sources: List[CompanyProfileSource]
+    updated: Optional[float] = None
+    mcp_config: Optional[Dict[str, str]] = None

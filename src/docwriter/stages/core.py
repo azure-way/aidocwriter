@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional, Mapping, List
 
 from docwriter.agents.cohesion_reviewer import CohesionReviewerAgent
+from docwriter.agents.core_rfp import CoreRfpAgent
 from docwriter.agents.interviewer import InterviewerAgent
 from docwriter.agents.planner import PlannerAgent
 from docwriter.agents.reviewer import ReviewerAgent
@@ -32,6 +33,8 @@ from docwriter.stage_utils import (
 from docwriter.storage import BlobStore, JobStoragePaths
 from docwriter.summary import Summarizer
 from docwriter.telemetry import stage_timer, track_event, track_exception, StageTiming
+from docwriter.company_profile_context import load_company_profile, profile_context_text
+from docwriter.rfp_extract import extract_docx_text, extract_pdf_text, extract_xlsx_text_and_json
 from .cycles import CycleState, enrich_details_with_cycles as _with_cycle_metadata
 from docwriter.cycle_repository import ensure_cycle_state
 
@@ -70,6 +73,62 @@ def _estimate_tokens(text: str) -> int:
         return len(encoding.encode(text))
     except Exception:
         return max(1, len(text) // 3)
+
+
+def _load_followup_state(store: BlobStore, job_paths: JobStoragePaths) -> Optional[Dict[str, Any]]:
+    try:
+        raw = store.get_text(blob=job_paths.intake("followup_questions.json"))
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _write_followup_state(store: BlobStore, job_paths: JobStoragePaths, payload: Dict[str, Any]) -> None:
+    store.put_text(blob=job_paths.intake("followup_questions.json"), text=json.dumps(payload, indent=2))
+    store.put_text(blob=job_paths.intake("questions.json"), text=json.dumps(payload.get("questions", []), indent=2))
+    sample_answers = {
+        str(item.get("id")): item.get("sample", "")
+        for item in (payload.get("questions") or [])
+        if isinstance(item, dict)
+    }
+    store.put_text(blob=job_paths.intake("sample_answers.json"), text=json.dumps(sample_answers, indent=2))
+
+
+def _publish_clarify_ready(
+    job_paths: JobStoragePaths,
+    data: Mapping[str, Any],
+    timing: StageTiming,
+    notes: str,
+) -> None:
+    artifact_path = job_paths.intake("followup_questions.json")
+    details = _with_cycle_metadata(
+        {
+            "duration_s": timing.duration_s,
+            "tokens": 0,
+            "model": None,
+            "artifact": artifact_path,
+            "notes": notes,
+        },
+        data,
+    )
+    publish_status(
+        StatusEvent(
+            job_id=job_paths.job_id,
+            stage="CLARIFY_READY",
+            ts=time.time(),
+            message=_build_stage_message(
+                "Clarification Needed",
+                artifact_path,
+                timing.duration_s,
+                0,
+                None,
+                notes,
+            ),
+            artifact=artifact_path,
+            extra={"details": details, "user_id": job_paths.user_id},
+        )
+    )
 
 
 def _init_review_progress(raw: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
@@ -402,24 +461,107 @@ def process_plan_intake(data: Dict[str, Any], interviewer: InterviewerAgent | No
     job_paths = _job_paths(data)
     artifact_path = job_paths.intake("questions.json")
     with stage_timer(job_id=data["job_id"], stage="PLAN_INTAKE", user_id=job_paths.user_id) as timing:
-        title = data["title"]
-        questions = interviewer.propose_questions(title)
+        store = BlobStore()
+        context_snapshot: Dict[str, Any] = {}
         try:
-            store = BlobStore()
-            store.put_text(
-                blob=artifact_path, text=json.dumps(questions, indent=2)
-            )
-            context_snapshot = {
-                "job_id": data.get("job_id"),
-                "title": data.get("title"),
-                "audience": data.get("audience"),
-                "out": data.get("out"),
-                "user_id": job_paths.user_id,
+            context_text = store.get_text(blob=job_paths.intake("context.json"))
+            context_snapshot = json.loads(context_text)
+        except Exception:
+            context_snapshot = {}
+        doc_type = context_snapshot.get("document_type") or data.get("document_type")
+        questions: List[Dict[str, Any]]
+        if doc_type == "rfp":
+            sources = context_snapshot.get("sources") or []
+            combined_text_parts: List[str] = []
+            xlsx_payloads: Dict[str, Any] = {}
+            for idx, source in enumerate(sources):
+                if not isinstance(source, dict):
+                    continue
+                blob_path = source.get("blob_path")
+                filename = source.get("filename") or f"source-{idx+1}"
+                if not blob_path:
+                    continue
+                try:
+                    data_bytes = store.get_bytes(blob=blob_path)
+                except Exception:
+                    continue
+                extension = str(filename).split(".")[-1].lower()
+                try:
+                    if extension == "pdf":
+                        text = extract_pdf_text(data_bytes)
+                    elif extension == "docx":
+                        text = extract_docx_text(data_bytes)
+                    elif extension == "xlsx":
+                        xlsx_result = extract_xlsx_text_and_json(data_bytes)
+                        text = xlsx_result.text
+                        if xlsx_result.json_payload:
+                            xlsx_payloads[str(filename)] = xlsx_result.json_payload
+                    else:
+                        continue
+                except Exception as exc:
+                    track_exception(exc, {"job_id": data["job_id"], "stage": "PLAN_INTAKE", "source": filename})
+                    continue
+                if text:
+                    combined_text_parts.append(f"=== SOURCE: {filename} ===\n{text}")
+            combined_text = "\n\n".join(combined_text_parts)
+            if combined_text:
+                store.put_text(blob=job_paths.intake("rfp.txt"), text=combined_text)
+            if xlsx_payloads:
+                store.put_text(
+                    blob=job_paths.intake("rfp.xlsx.json"),
+                    text=json.dumps(xlsx_payloads, indent=2),
+                )
+            profile_data = {}
+            mcp_warning = None
+            if isinstance(context_snapshot, dict):
+                profile_data = context_snapshot.get("company_profile_snapshot") or {}
+                mcp_warning = context_snapshot.get("mcp_warning")
+            if not profile_data:
+                profile_data, mcp_warning = load_company_profile(job_paths.user_id)
+            metadata = {
+                "sources": sources,
+                "company_profile": profile_data,
             }
+            if mcp_warning:
+                metadata["mcp_warning"] = mcp_warning
+            analyzer = CoreRfpAgent()
+            analysis = analyzer.analyze(combined_text, metadata=metadata)
+            store.put_text(blob=job_paths.intake("rfp_analysis.json"), text=json.dumps(analysis, indent=2))
+            store.put_text(
+                blob=job_paths.intake("requirements.json"),
+                text=json.dumps(analysis.get("requirements", []), indent=2),
+            )
+            questions = analysis.get("questions", []) or []
+            inferred_title = analysis.get("title") or ""
+            inferred_audience = analysis.get("audience") or ""
+            if inferred_title or inferred_audience:
+                context_snapshot["title"] = inferred_title or context_snapshot.get("title")
+                context_snapshot["audience"] = inferred_audience or context_snapshot.get("audience")
+            if mcp_warning:
+                context_snapshot["mcp_warning"] = mcp_warning
             store.put_text(
                 blob=job_paths.intake("context.json"),
                 text=json.dumps(context_snapshot, indent=2),
             )
+        else:
+            title = data.get("title") or ""
+            questions = interviewer.propose_questions(title)
+        try:
+            store.put_text(
+                blob=artifact_path, text=json.dumps(questions, indent=2)
+            )
+            if not context_snapshot:
+                context_snapshot = {
+                    "job_id": data.get("job_id"),
+                    "title": data.get("title"),
+                    "audience": data.get("audience"),
+                    "out": data.get("out"),
+                    "user_id": job_paths.user_id,
+                }
+                store.put_text(
+                    blob=job_paths.intake("context.json"),
+                    text=json.dumps(context_snapshot, indent=2),
+                )
             sample_answers = {
                 str(item.get("id")): item.get("sample", "") for item in questions if isinstance(item, dict)
             }
@@ -459,6 +601,12 @@ def process_plan_intake(data: Dict[str, Any], interviewer: InterviewerAgent | No
             extra={"details": intake_details, "user_id": job_paths.user_id},
         )
     )
+    if not questions:
+        resume_payload = dict(context_snapshot)
+        resume_payload.update({"job_id": data.get("job_id"), "user_id": job_paths.user_id})
+        ensure_cycle_state(resume_payload)
+        publish_stage_event("INTAKE_RESUME", "QUEUED", resume_payload)
+        send_queue_message(settings.sb_queue_intake_resume, resume_payload)
 
 
 def process_intake_resume(data: Dict[str, Any]) -> None:
@@ -561,7 +709,62 @@ def process_plan(data: Dict[str, Any], planner: PlannerAgent | None = None) -> N
             except Exception:
                 pass
 
-        plan = planner.plan(title or "", audience=audience or "", length_pages=length_pages)
+        followup_state = _load_followup_state(store, job_paths) if store else None
+        if followup_state and not followup_state.get("answered") and followup_state.get("stage") in {"PLAN", "WRITE"}:
+            _publish_clarify_ready(job_paths, data, timing, "Awaiting clarification answers")
+            return
+
+        followups: List[Dict[str, Any]] = []
+        try:
+            followups = InterviewerAgent().propose_followups(title or "", answers)
+        except Exception:
+            followups = []
+        if followups:
+            payload = {"stage": "PLAN", "answered": False, "questions": followups}
+            if store:
+                _write_followup_state(store, job_paths, payload)
+            _publish_clarify_ready(job_paths, data, timing, "Clarifications needed before planning")
+            return
+
+        context_parts: List[str] = []
+        if store:
+            try:
+                rfp_analysis = json.loads(store.get_text(blob=job_paths.intake("rfp_analysis.json")))
+                summary = rfp_analysis.get("summary")
+                if summary:
+                    context_parts.append(f"RFP Summary:\n{summary}")
+            except Exception:
+                pass
+            try:
+                requirements_text = store.get_text(blob=job_paths.intake("requirements.json"))
+                requirements = json.loads(requirements_text)
+                if isinstance(requirements, list) and requirements:
+                    req_lines = [f"- {item.get('id')}: {item.get('text')}" for item in requirements if isinstance(item, dict)]
+                    if req_lines:
+                        context_parts.append("RFP Requirements:\n" + "\n".join(req_lines))
+            except Exception:
+                pass
+        profile_data = {}
+        if store:
+            try:
+                context_text = store.get_text(blob=job_paths.intake("context.json"))
+                context = json.loads(context_text)
+                if isinstance(context, dict):
+                    profile_data = context.get("company_profile_snapshot") or {}
+            except Exception:
+                profile_data = {}
+        if not profile_data:
+            profile_data, _ = load_company_profile(job_paths.user_id)
+        profile_text = profile_context_text(profile_data)
+        if profile_text:
+            context_parts.append(profile_text)
+
+        plan = planner.plan(
+            title or "",
+            audience=audience or "",
+            length_pages=length_pages,
+            context="\n\n".join(context_parts) if context_parts else None,
+        )
         try:
             plan.global_style.update({
                 "tone": answers.get("tone") or plan.global_style.get("tone"),
@@ -625,6 +828,26 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
     written_sections_raw = data.get("written_sections") or []
     written_sections = {str(s) for s in written_sections_raw if s is not None}
     with stage_timer(job_id=data["job_id"], stage="WRITE", user_id=job_paths.user_id) as timing:
+        store = BlobStore()
+        followup_state = _load_followup_state(store, job_paths)
+        if followup_state and not followup_state.get("answered") and followup_state.get("stage") == "WRITE":
+            _publish_clarify_ready(job_paths, data, timing, "Awaiting clarification answers before writing")
+            return
+
+        if not followup_state or followup_state.get("stage") != "WRITE":
+            try:
+                followups = InterviewerAgent().propose_followups(
+                    data.get("title") or "",
+                    data.get("intake_answers") or {},
+                )
+            except Exception:
+                followups = []
+            if followups:
+                payload = {"stage": "WRITE", "answered": False, "questions": followups}
+                _write_followup_state(store, job_paths, payload)
+                _publish_clarify_ready(job_paths, data, timing, "Clarifications needed before writing")
+                return
+
         plan = data["plan"]
         outline = plan.get("outline", [])
         graph = build_dependency_graph(outline)
@@ -637,7 +860,6 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
         existing_title_page = ""
         existing_body = ""
         try:
-            store = BlobStore()
             existing_text = store.get_text(blob=blob_path)
             if TITLE_PAGE_END in existing_text:
                 title_part, rest = existing_text.split(TITLE_PAGE_END, 1)
@@ -652,11 +874,48 @@ def process_write(data: Dict[str, Any], writer: WriterAgent | None = None, summa
         document_text_parts: list[str] = [existing_body] if existing_body else []
         remaining = [sid for sid in order if sid not in written_sections]
         batch = remaining[:write_batch_size]
+        profile_data = {}
+        try:
+            context_text = store.get_text(blob=job_paths.intake("context.json"))
+            context = json.loads(context_text)
+            if isinstance(context, dict):
+                profile_data = context.get("company_profile_snapshot") or {}
+        except Exception:
+            profile_data = {}
+        if not profile_data:
+            profile_data, _ = load_company_profile(job_paths.user_id)
+        profile_text = profile_context_text(profile_data)
+        requirements_text = ""
+        try:
+            req_raw = store.get_text(blob=job_paths.intake("requirements.json"))
+            requirements = json.loads(req_raw)
+            if isinstance(requirements, list) and requirements:
+                req_lines = [f"- {item.get('id')}: {item.get('text')}" for item in requirements if isinstance(item, dict)]
+                requirements_text = "\n".join(req_lines)
+        except Exception:
+            requirements_text = ""
+
+        extra_guidance_parts = []
+        if requirements_text:
+            extra_guidance_parts.append("Ensure every RFP requirement ID is addressed:\n" + requirements_text)
+        if profile_text:
+            extra_guidance_parts.append(profile_text)
+        extra_guidance = "\n\n".join(extra_guidance_parts) if extra_guidance_parts else None
+
         for idx, sid in enumerate(batch, start=1):
             section = id_to_section[sid]
             deps = section.get("dependencies", []) or []
             dep_context = "\n".join([dependency_summaries.get(str(d), "") for d in deps if dependency_summaries.get(str(d))])
-            section_output = "".join(list(writer.write_section(plan=plan, section=section, dependency_context=dep_context)))
+            section_output = "".join(
+                list(
+                    writer.write_section(
+                        plan=plan,
+                        section=section,
+                        dependency_context=dep_context,
+                        extra_guidance=extra_guidance,
+                    )
+                )
+            )
             document_text_parts.append(section_output)
             summary = summarizer.summarize_section("\n\n".join(document_text_parts))
             dependency_summaries[sid] = summary

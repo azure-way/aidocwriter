@@ -9,7 +9,7 @@ class FakeLLM:
     def __init__(self, payload: str):
         self.payload = payload
 
-    def chat(self, model, messages, stream=False):
+    def chat(self, model, messages, stream=False, response_format=None):
         return self.payload
 
 

@@ -44,5 +44,5 @@ def test_build_batch_context_includes_dependency_stub_once():
 
     assert deps == ["1"]
     assert "Short summary of section 1" in combined
-    assert combined.count("SECTION:2") == 1
-    assert combined.count("SECTION:3") == 1
+    assert combined.count("SECTION:2:START") == 1
+    assert combined.count("SECTION:3:START") == 1

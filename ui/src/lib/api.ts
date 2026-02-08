@@ -183,6 +183,10 @@ export async function fetchIntakeQuestions(title: string) {
   });
 }
 
+export async function fetchJobIntakeQuestions(jobId: string) {
+  return request(`/jobs/${jobId}/intake/questions`, { auth: true });
+}
+
 export async function createJob(payload: { title: string; audience: string; cycles: number }) {
   return request("/jobs", {
     method: "POST",
@@ -191,12 +195,77 @@ export async function createJob(payload: { title: string; audience: string; cycl
   });
 }
 
+export async function createRfpJob(payload: {
+  file?: File;
+  files?: File[];
+  cycles?: number;
+}) {
+  if (!API_BASE) {
+    throw new Error("NEXT_PUBLIC_API_BASE_URL is not set");
+  }
+  const token = await getAccessToken();
+  const form = new FormData();
+  if (payload.file) {
+    form.append("file", payload.file);
+  }
+  if (payload.files?.length) {
+    payload.files.forEach((item) => form.append("files", item));
+  }
+  if (payload.cycles) {
+    form.append("cycles", String(payload.cycles));
+  }
+  const res = await fetch(`${API_BASE}/jobs/rfp`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Request failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function resumeJob(jobId: string, answers: Record<string, unknown>) {
   return request(`/jobs/${jobId}/resume`, {
     method: "POST",
     body: JSON.stringify({ answers }),
     auth: true,
   });
+}
+
+export async function fetchCompanyProfile() {
+  return request("/profile/company", { auth: true });
+}
+
+export async function saveCompanyProfile(
+  profile: Record<string, unknown>,
+  mcpConfig?: { base_url?: string; resource_path?: string; tool_path?: string }
+) {
+  return request("/profile/company", {
+    method: "PUT",
+    body: JSON.stringify({ profile, mcp_config: mcpConfig }),
+    auth: true,
+  });
+}
+
+export async function uploadCompanyProfileDoc(file: File) {
+  if (!API_BASE) {
+    throw new Error("NEXT_PUBLIC_API_BASE_URL is not set");
+  }
+  const token = await getAccessToken();
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API_BASE}/profile/company/upload`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Request failed: ${res.status}`);
+  }
+  return res.json();
 }
 
 export async function fetchJobStatus(jobId: string) {

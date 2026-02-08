@@ -33,7 +33,7 @@ class PlannerAgent:
         )
         logger.debug("PlannerAgent initialized with model %s", self.settings.planner_model)
 
-    def plan(self, title: str, audience: str, length_pages: int) -> Plan:
+    def plan(self, title: str, audience: str, length_pages: int, context: str | None = None) -> Plan:
         logger.debug(
             "Planner starting",
             extra={"title": title, "audience": audience, "length_pages": length_pages},
@@ -44,6 +44,8 @@ class PlannerAgent:
             " Keep it compact but complete."
         )
         user = f"Title: {title}\nAudience: {audience}\nTarget length pages: {length_pages}"
+        if context:
+            user = f"{user}\n\nContext:\n{context}"
 
         prompt = (
             "Respond ONLY with JSON having keys: title, audience, length_pages, outline, glossary,"

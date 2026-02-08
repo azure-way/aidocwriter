@@ -9,7 +9,9 @@ import { TimelineCard } from "@/components/timeline/TimelineCard";
 import { TimelineStageCard } from "@/components/timeline/TimelineStageCard";
 import {
   createJob,
+  createRfpJob,
   fetchIntakeQuestions,
+  fetchJobIntakeQuestions,
   fetchJobStatus,
   fetchJobTimeline,
   downloadArtifact,
@@ -55,6 +57,7 @@ const SUMMARY_STAGE_ORDER = [
   "ENQUEUED",
   "INTAKE_READY",
   "INTAKE_RESUME",
+  "CLARIFY_READY",
   "PLAN",
   "WRITE",
   "REVIEW",
@@ -80,12 +83,17 @@ const reviewSummaryEnabled = process.env.NEXT_PUBLIC_REVIEW_SUMMARY_ENABLED !== 
 export function JobDashboard({ initialJobId }: JobDashboardProps) {
   const { user, isLoading: authLoading, error: authError } = useUser();
   const primaryButtonClass = "btn-primary";
+  const [mode, setMode] = useState<"standard" | "rfp">("standard");
   const [step, setStep] = useState<1 | 2 | 3>(initialJobId ? 3 : 1);
   const [title, setTitle] = useState("");
   const [audience, setAudience] = useState("");
   const [cycles, setCycles] = useState(2);
+  const [rfpZip, setRfpZip] = useState<File | null>(null);
+  const [rfpFiles, setRfpFiles] = useState<File[]>([]);
   const [questions, setQuestions] = useState<IntakeQuestion[]>([]);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [followupQuestions, setFollowupQuestions] = useState<IntakeQuestion[]>([]);
+  const [followupAnswers, setFollowupAnswers] = useState<Record<string, string>>({});
   const [jobId, setJobId] = useState<string | null>(initialJobId ?? null);
   const [status, setStatus] = useState<StatusPayload | null>(null);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
@@ -94,6 +102,8 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
   const [error, setError] = useState<string | null>(null);
   const [artifactNotice, setArtifactNotice] = useState<string | null>(null);
   const [documentTitle, setDocumentTitle] = useState<string | null>(null);
+  const [loadingFollowups, setLoadingFollowups] = useState(false);
+  const [submittingFollowups, setSubmittingFollowups] = useState(false);
   const noticeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const enabledReviewSubstages = useMemo(() => {
     const list: string[] = ["REVIEW_GENERAL"];
@@ -102,6 +112,16 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
     if (reviewSummaryEnabled) list.push("REVIEW_SUMMARY");
     list.push("VERIFY", "REWRITE");
     return list;
+  }, []);
+
+  const handleModeChange = useCallback((next: "standard" | "rfp") => {
+    setMode(next);
+    setStep(1);
+    setError(null);
+    setQuestions([]);
+    setAnswers({});
+    setRfpZip(null);
+    setRfpFiles([]);
   }, []);
 
   const clearNotice = useCallback(() => {
@@ -178,6 +198,27 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
           setTimeline(history.events);
         }
         setTimelineMeta(history?.meta ?? {});
+        const stageBase = payload?.stage ? normalizeStageName(payload.stage) : null;
+        if (stageBase === "INTAKE_READY" || stageBase === "CLARIFY_READY") {
+          setLoadingFollowups(true);
+          try {
+            const followup = await fetchJobIntakeQuestions(currentJobId);
+            const incoming = (followup.questions ?? []) as IntakeQuestion[];
+            setFollowupQuestions(incoming);
+            const defaults: Record<string, string> = {};
+            incoming.forEach((q) => {
+              defaults[q.id] = q.sample ?? "";
+            });
+            setFollowupAnswers(defaults);
+          } catch (err) {
+            console.error(err);
+          } finally {
+            setLoadingFollowups(false);
+          }
+        } else {
+          setFollowupQuestions([]);
+          setFollowupAnswers({});
+        }
       } catch (e) {
         console.error(e);
       }
@@ -246,6 +287,53 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
       setLoading(false);
     }
   }, [answers, title, audience, cycles, clearNotice, user?.sub]);
+
+  const handleSubmitRfp = useCallback(async () => {
+    setError(null);
+    setLoading(true);
+    try {
+      if (!user?.sub) {
+        throw new Error("Sign in required to create a document");
+      }
+      if (!rfpZip && rfpFiles.length === 0) {
+        throw new Error("Upload an RFP file or zip archive.");
+      }
+      const response = await createRfpJob({
+        file: rfpZip ?? undefined,
+        files: rfpFiles.length ? rfpFiles : undefined,
+        cycles,
+      });
+      setDocumentTitle("RFP Response");
+      const id = response.job_id as string;
+      setJobId(id);
+      setStep(3);
+      setTimeline([]);
+      setTimelineMeta({});
+      clearNotice();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to submit RFP");
+    } finally {
+      setLoading(false);
+    }
+  }, [rfpZip, rfpFiles, cycles, clearNotice, user?.sub]);
+
+  const handleSubmitFollowups = useCallback(async () => {
+    if (!jobId) return;
+    setSubmittingFollowups(true);
+    setError(null);
+    try {
+      const trimmed = Object.fromEntries(
+        Object.entries(followupAnswers).map(([key, value]) => [key, value.trim()])
+      );
+      await resumeJob(jobId, trimmed);
+      setFollowupQuestions([]);
+      setFollowupAnswers({});
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to submit clarifications");
+    } finally {
+      setSubmittingFollowups(false);
+    }
+  }, [followupAnswers, jobId]);
 
   const disableSubmit = useMemo(() => {
     return Object.values(answers).some((ans) => !ans.trim());
@@ -1222,29 +1310,97 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
               Tell us what you need so we can craft a tailored intake questionnaire.
             </p>
           </div>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              className={`rounded-full px-5 py-2 text-sm font-semibold transition ${
+                mode === "standard"
+                  ? "bg-white text-slate-900"
+                  : "border border-white/40 text-white/80 hover:border-white"
+              }`}
+              onClick={() => handleModeChange("standard")}
+            >
+              Standard document
+            </button>
+            <button
+              type="button"
+              className={`rounded-full px-5 py-2 text-sm font-semibold transition ${
+                mode === "rfp"
+                  ? "bg-white text-slate-900"
+                  : "border border-white/40 text-white/80 hover:border-white"
+              }`}
+              onClick={() => handleModeChange("rfp")}
+            >
+              RFP response
+            </button>
+          </div>
           <div className="grid gap-8 md:grid-cols-2">
-            <div className="space-y-3">
-              <label className="text-xs font-semibold uppercase tracking-[0.4em] text-white/70">
-                Working title
-              </label>
-              <input
-                className="input-glass border-white/40 bg-white/95 text-slate-900 placeholder:text-slate-500"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="e.g., Asynchronous Integration Patterns"
-              />
-            </div>
-            <div className="space-y-3">
-              <label className="text-xs font-semibold uppercase tracking-[0.4em] text-white/70">
-                Primary audience
-              </label>
-              <input
-                className="input-glass border-white/40 bg-white/95 text-slate-900 placeholder:text-slate-500"
-                value={audience}
-                onChange={(e) => setAudience(e.target.value)}
-                placeholder="e.g., Enterprise Integration Architects"
-              />
-            </div>
+            {mode === "standard" ? (
+              <>
+                <div className="space-y-3">
+                  <label className="text-xs font-semibold uppercase tracking-[0.4em] text-white/70">
+                    Working title
+                  </label>
+                  <input
+                    className="input-glass border-white/40 bg-white/95 text-slate-900 placeholder:text-slate-500"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="e.g., Asynchronous Integration Patterns"
+                  />
+                </div>
+                <div className="space-y-3">
+                  <label className="text-xs font-semibold uppercase tracking-[0.4em] text-white/70">
+                    Primary audience
+                  </label>
+                  <input
+                    className="input-glass border-white/40 bg-white/95 text-slate-900 placeholder:text-slate-500"
+                    value={audience}
+                    onChange={(e) => setAudience(e.target.value)}
+                    placeholder="e.g., Enterprise Integration Architects"
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="space-y-3">
+                  <label className="text-xs font-semibold uppercase tracking-[0.4em] text-white/70">
+                    Zip bundle (recommended)
+                  </label>
+                  <input
+                    type="file"
+                    accept=".zip,.pdf,.docx,.xlsx"
+                    className="input-glass border-white/40 bg-white/95 text-slate-900 file:mr-4 file:rounded-full file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] || null;
+                      setRfpZip(file);
+                      if (file) setRfpFiles([]);
+                    }}
+                  />
+                  <p className="text-xs text-white/70">
+                    Upload a zip of PDFs/DOCX/XLSX or a single file.
+                  </p>
+                </div>
+                <div className="space-y-3">
+                  <label className="text-xs font-semibold uppercase tracking-[0.4em] text-white/70">
+                    Multiple files
+                  </label>
+                  <input
+                    type="file"
+                    multiple
+                    accept=".pdf,.docx,.xlsx"
+                    className="input-glass border-white/40 bg-white/95 text-slate-900 file:mr-4 file:rounded-full file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white"
+                    onChange={(e) => {
+                      const files = Array.from(e.target.files ?? []);
+                      setRfpFiles(files);
+                      if (files.length) setRfpZip(null);
+                    }}
+                  />
+                  <p className="text-xs text-white/70">
+                    Upload multiple PDFs/DOCX/XLSX if you prefer.
+                  </p>
+                </div>
+              </>
+            )}
           </div>
           <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
             <div className="space-y-3">
@@ -1260,13 +1416,23 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
                 onChange={(e) => setCycles(Number(e.target.value))}
               />
             </div>
-            <button
-              className={`${primaryButtonClass} w-full md:w-auto`}
-              disabled={loading || !title || !audience}
-              onClick={handleGenerateQuestions}
-            >
-              {loading ? "Generating questions..." : "Generate intake questionnaire"}
-            </button>
+            {mode === "standard" ? (
+              <button
+                className={`${primaryButtonClass} w-full md:w-auto`}
+                disabled={loading || !title || !audience}
+                onClick={handleGenerateQuestions}
+              >
+                {loading ? "Generating questions..." : "Generate intake questionnaire"}
+              </button>
+            ) : (
+              <button
+                className={`${primaryButtonClass} w-full md:w-auto`}
+                disabled={loading || (!rfpZip && rfpFiles.length === 0)}
+                onClick={handleSubmitRfp}
+              >
+                {loading ? "Uploading..." : "Upload RFP & start"}
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1311,6 +1477,49 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
 
       {step === 3 && (
         <div className="space-y-6">
+          {status?.stage &&
+          ["INTAKE_READY", "CLARIFY_READY"].includes(normalizeStageName(status.stage)) ? (
+            <GlassCard className="space-y-6 rounded-[32px] bg-gradient-to-br from-white/95 via-indigo-50/95 to-sky-100/90 px-10 py-10 text-slate-700">
+              <GradientTitle
+                title="Clarifications needed"
+                subtitle="Answer the questions below to keep the workflow moving."
+                className="bg-gradient-to-r from-purple-400 via-pink-300 to-sky-400 text-transparent"
+                subtitleClassName="text-slate-500"
+              />
+              {loadingFollowups ? (
+                <p className="text-sm text-slate-500">Loading questions…</p>
+              ) : followupQuestions.length === 0 ? (
+                <p className="text-sm text-slate-500">No questions available yet.</p>
+              ) : (
+                <div className="space-y-6">
+                  {followupQuestions.map((question) => (
+                    <div key={question.id} className="space-y-2">
+                      <label className="text-xs font-semibold uppercase tracking-[0.4em] text-slate-400">
+                        {question.q}
+                      </label>
+                      <textarea
+                        className="textarea-glass"
+                        value={followupAnswers[question.id] ?? ""}
+                        onChange={(e) =>
+                          setFollowupAnswers((prev) => ({ ...prev, [question.id]: e.target.value }))
+                        }
+                        placeholder="Type your response..."
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex flex-col gap-4 md:flex-row md:justify-end">
+                <button
+                  className={`${primaryButtonClass} w-full md:w-auto`}
+                  disabled={submittingFollowups || loadingFollowups || followupQuestions.length === 0}
+                  onClick={handleSubmitFollowups}
+                >
+                  {submittingFollowups ? "Submitting..." : "Submit answers & resume"}
+                </button>
+              </div>
+            </GlassCard>
+          ) : null}
           <GlassCard className="space-y-6 rounded-[32px] bg-gradient-to-br from-white/95 via-indigo-50/95 to-sky-100/90 px-10 py-10 text-slate-700">
             <GradientTitle
               title="Job submitted"
@@ -1348,9 +1557,9 @@ export default function NewDocumentPage() {
     <div className="space-y-12">
       <section className="space-y-6 rounded-[32px] border border-white/25 bg-gradient-to-br from-slate-900 via-blue-900 to-sky-700 p-10 text-white shadow-[0_45px_140px_rgba(15,23,42,0.4)]">
         <p className="text-sm uppercase tracking-[0.35em] text-white/80">New document</p>
-        <h1 className="text-4xl font-semibold">Launch a DocWriter pipeline</h1>
+        <h1 className="text-4xl font-semibold">Launch a DocWriter pipeline or RFP response</h1>
         <p className="text-lg text-white/80">
-          Provide a title, audience, and desired review cycles. DocWriter will interview you, plan the structure, and orchestrate writers, reviewers, and verifiers automatically.
+          Start with a standard document or upload an RFP bundle. DocWriter will interview you, plan the structure, and orchestrate writers, reviewers, and verifiers automatically.
         </p>
         <div className="flex flex-wrap gap-4">
           <a

@@ -4,12 +4,15 @@ import io
 import json
 import re
 import time
+import uuid
 import zipfile
 
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi import APIRouter, Depends, HTTPException, status, Response, UploadFile, File, Form, Header
 from azure.core.exceptions import ResourceNotFoundError, HttpResponseError
 
 from docwriter.queue import Job, send_job, send_resume
+from docwriter.company_profile_store import get_company_profile_store
+from docwriter.mcp_client import McpClient
 from docwriter.storage import BlobStore, JobStoragePaths
 from docwriter.status_store import get_status_table_store
 from docwriter.document_index import get_document_index_store
@@ -26,13 +29,23 @@ from ..models import (
     StatusEventEntry,
     DocumentListEntry,
     DocumentListResponse,
+    IntakeQuestionsResponse,
+    IntakeQuestion,
 )
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+try:  # pragma: no cover - optional dependency for multipart uploads
+    import python_multipart  # type: ignore  # noqa: F401
+
+    _multipart_available = True
+except Exception:  # pragma: no cover
+    _multipart_available = False
 
 SUMMARY_STAGE_ORDER = [
     "ENQUEUED",
     "INTAKE_READY",
     "INTAKE_RESUME",
+    "CLARIFY_READY",
     "PLAN",
     "WRITE",
     "REVIEW",
@@ -82,6 +95,39 @@ def _parse_stage_message(message: str) -> dict[str, object]:
     return data
 
 
+def _sanitize_filename(filename: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", filename or "").strip("._")
+    return cleaned or "upload"
+
+
+def _is_allowed_rfp_extension(filename: str) -> bool:
+    ext = filename.lower().split(".")[-1]
+    return ext in {"pdf", "docx", "xlsx"}
+
+
+def _store_rfp_sources(
+    store: BlobStore,
+    job_paths: JobStoragePaths,
+    files: list[tuple[str, bytes, str]],
+) -> list[dict[str, str]]:
+    sources: list[dict[str, str]] = []
+    for idx, (name, data, content_type) in enumerate(files, start=1):
+        safe_name = _sanitize_filename(name)
+        blob_path = job_paths.intake(f"sources/{idx:02d}-{safe_name}")
+        store.put_bytes(blob=blob_path, data_bytes=data)
+        sources.append({"filename": safe_name, "blob_path": blob_path, "content_type": content_type})
+    return sources
+
+
+def _merge_profiles(user_profile: dict, mcp_profile: dict) -> dict:
+    merged = dict(mcp_profile)
+    for key, value in user_profile.items():
+        if value in (None, "", [], {}):
+            continue
+        merged[key] = value
+    return merged
+
+
 @router.get("", response_model=DocumentListResponse)
 def list_jobs(user_id: str = Depends(current_user_dependency)) -> DocumentListResponse:
     store = get_document_index_store()
@@ -112,6 +158,101 @@ def create_job(payload: JobCreateRequest, user_id: str = Depends(current_user_de
     return JobCreateResponse(job_id=job_id)
 
 
+if _multipart_available:
+    @router.post("/rfp", response_model=JobCreateResponse, status_code=status.HTTP_202_ACCEPTED)
+    def create_rfp_job(
+        file: UploadFile | None = File(None),
+        files: list[UploadFile] | None = File(None),
+        cycles: int | None = Form(None),
+        authorization: str = Header(..., alias="Authorization"),
+        user_id: str = Depends(current_user_dependency),
+        store: BlobStore = Depends(blob_store_dependency),
+    ) -> JobCreateResponse:
+        incoming: list[tuple[str, bytes, str]] = []
+        if file is not None:
+            data = file.file.read()
+            filename = file.filename or "rfp.zip"
+            content_type = file.content_type or "application/octet-stream"
+            if filename.lower().endswith(".zip"):
+                try:
+                    archive = zipfile.ZipFile(io.BytesIO(data))
+                except zipfile.BadZipFile as exc:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid zip archive") from exc
+                for name in archive.namelist():
+                    if name.endswith("/") or name.startswith("__MACOSX"):
+                        continue
+                    safe_name = name.replace("\\", "/")
+                    if ".." in safe_name or safe_name.startswith("/"):
+                        continue
+                    basename = safe_name.split("/")[-1]
+                    if not _is_allowed_rfp_extension(basename):
+                        continue
+                    with archive.open(name) as member:
+                        incoming.append((basename, member.read(), "application/octet-stream"))
+            else:
+                if not _is_allowed_rfp_extension(filename):
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported file type")
+                incoming.append((filename, data, content_type))
+        if files:
+            for upload in files:
+                name = upload.filename or "rfp-source"
+                if not _is_allowed_rfp_extension(name):
+                    continue
+                incoming.append((name, upload.file.read(), upload.content_type or "application/octet-stream"))
+        if not incoming:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No valid RFP files uploaded")
+
+        scheme, _, token = authorization.partition(" ")
+        mcp_token = token if scheme.lower() == "bearer" and token else ""
+        job_id = str(uuid.uuid4())
+        job = Job(title="RFP Response", audience="", cycles=cycles or 2, user_id=user_id, job_id=job_id)
+        job_id = send_job(job)
+        job_paths = JobStoragePaths(user_id=user_id, job_id=job_id)
+        sources = _store_rfp_sources(store, job_paths, incoming)
+        profile_snapshot: dict[str, object] = {}
+        mcp_warning: str | None = None
+        try:
+            profile_store = get_company_profile_store()
+            record = profile_store.get(user_id) or {}
+            user_profile = record.get("profile") or {}
+            mcp_config = record.get("mcp_config") or {}
+            mcp_profile = McpClient().get_company_profile(
+                base_url=mcp_config.get("base_url"),
+                resource_path=mcp_config.get("resource_path"),
+                token=mcp_token,
+            ) or {}
+            profile_snapshot = _merge_profiles(user_profile, mcp_profile)
+        except Exception:
+            mcp_warning = "Company MCP data unavailable"
+
+        context_snapshot = {
+            "job_id": job_id,
+            "title": "",
+            "audience": "",
+            "out": job_paths.draft(),
+            "cycles": cycles or 2,
+            "user_id": user_id,
+            "document_type": "rfp",
+            "sources": sources,
+            "company_profile_snapshot": profile_snapshot,
+        }
+        if mcp_warning:
+            context_snapshot["mcp_warning"] = mcp_warning
+        store.put_text(blob=job_paths.intake("context.json"), text=json.dumps(context_snapshot, indent=2))
+
+        index_store = get_document_index_store()
+        index_store.upsert(
+            user_id,
+            job_id,
+            title="RFP Response",
+            audience="",
+            stage="ENQUEUED",
+            message="RFP job submitted",
+            updated=time.time(),
+        )
+        return JobCreateResponse(job_id=job_id)
+
+
 @router.post("/{job_id}/resume", response_model=ResumeResponse, status_code=status.HTTP_202_ACCEPTED)
 def resume_job(
     job_id: str,
@@ -126,7 +267,25 @@ def resume_job(
     job_paths = JobStoragePaths(user_id=user_id, job_id=job_id)
     blob_path = job_paths.intake("answers.json")
     if payload.answers is not None:
-        store.put_text(blob=blob_path, text=json.dumps(payload.answers, indent=2))
+        merged = dict(payload.answers)
+        try:
+            existing_answers = store.get_text(blob_path)
+            existing = json.loads(existing_answers)
+            if isinstance(existing, dict):
+                existing.update(merged)
+                merged = existing
+        except Exception:
+            pass
+        store.put_text(blob=blob_path, text=json.dumps(merged, indent=2))
+        try:
+            followup_path = job_paths.intake("followup_questions.json")
+            followup_raw = store.get_text(followup_path)
+            followup_state = json.loads(followup_raw) if followup_raw else {}
+            if isinstance(followup_state, dict):
+                followup_state["answered"] = True
+                store.put_text(blob=followup_path, text=json.dumps(followup_state, indent=2))
+        except Exception:
+            pass
     else:
         try:
             store.get_text(blob_path)
@@ -145,6 +304,30 @@ def resume_job(
     )
     send_resume(job_id, user_id=user_id)
     return ResumeResponse(job_id=job_id, message="Resume signal sent")
+
+
+@router.get("/{job_id}/intake/questions", response_model=IntakeQuestionsResponse)
+def intake_questions(job_id: str, user_id: str = Depends(current_user_dependency)) -> IntakeQuestionsResponse:
+    job_paths = JobStoragePaths(user_id=user_id, job_id=job_id)
+    store = BlobStore()
+    try:
+        questions_text = store.get_text(blob=job_paths.intake("questions.json"))
+        context_text = store.get_text(blob=job_paths.intake("context.json"))
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Intake questions not found") from exc
+    try:
+        questions_raw = json.loads(questions_text)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Invalid questions payload") from exc
+    try:
+        context = json.loads(context_text)
+    except json.JSONDecodeError:
+        context = {}
+    questions = [IntakeQuestion(**item) for item in questions_raw if isinstance(item, dict)]
+    title = ""
+    if isinstance(context, dict):
+        title = str(context.get("title") or "")
+    return IntakeQuestionsResponse(title=title, questions=questions)
 
 
 @router.get("/{job_id}/status", response_model=StatusResponse)

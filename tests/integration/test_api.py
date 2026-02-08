@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from azure.core.exceptions import ResourceNotFoundError
 
 from api.main import app
+from api.deps import current_user_dependency, blob_store_dependency
 
 class FakeStatusTableStore:
     def __init__(self) -> None:
@@ -33,12 +34,14 @@ class FakeStatusTableStore:
 def fake_status_table(monkeypatch):
     store = FakeStatusTableStore()
     monkeypatch.setattr("docwriter.status_store.get_status_table_store", lambda: store)
+    monkeypatch.setattr("api.routers.jobs.get_status_table_store", lambda: store)
     yield store
 
 
 @pytest.fixture
 def client(monkeypatch):
     saved_jobs = {}
+    document_index: Dict[str, Dict] = {}
 
     def fake_send_job(job):
         job_id = f"job-{len(saved_jobs) + 1}"
@@ -61,18 +64,41 @@ def client(monkeypatch):
             except KeyError as exc:
                 raise ResourceNotFoundError("Blob not found") from exc
 
+    class FakeDocumentIndexStore:
+        def upsert(self, user_id, job_id, **fields):
+            document_index[(user_id, job_id)] = {
+                "user_id": user_id,
+                "job_id": job_id,
+                **fields,
+            }
+
+        def get(self, user_id, job_id):
+            return document_index.get((user_id, job_id))
+
+        def list(self, user_id):
+            return [v for (uid, _), v in document_index.items() if uid == user_id]
+
     fake_store = FakeBlobStore()
 
     class FakeInterviewer:
         def propose_questions(self, title: str):
             return [{"id": "audience", "q": f"Audience for {title}?", "sample": "Integration architects"}]
 
+    fake_index_store = FakeDocumentIndexStore()
+
     monkeypatch.setattr("api.routers.jobs.send_job", fake_send_job)
     monkeypatch.setattr("api.routers.jobs.send_resume", fake_send_resume)
     monkeypatch.setattr("api.routers.jobs.BlobStore", lambda: fake_store)
+    monkeypatch.setattr("api.routers.jobs.get_document_index_store", lambda: fake_index_store)
     monkeypatch.setattr("api.routers.intake.InterviewerAgent", lambda: FakeInterviewer())
 
-    return TestClient(app)
+    app.dependency_overrides[current_user_dependency] = lambda: "user-1"
+    app.dependency_overrides[blob_store_dependency] = lambda: fake_store
+    client = TestClient(app)
+    try:
+        yield client
+    finally:
+        app.dependency_overrides = {}
 
 
 def test_create_job(client):
