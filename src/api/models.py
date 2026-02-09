@@ -132,6 +132,10 @@ class CompanyProfileResponse(BaseModel):
     mcp_config: Optional[Dict[str, str]] = None
 
 
+class FeatureFlagsResponse(BaseModel):
+    features: List[str]
+
+
 class McpDiscoverRequest(BaseModel):
     base_url: str
 

@@ -10,6 +10,7 @@ import { TimelineStageCard } from "@/components/timeline/TimelineStageCard";
 import {
   createJob,
   createRfpJob,
+  fetchFeatureFlags,
   fetchIntakeQuestions,
   fetchJobIntakeQuestions,
   fetchJobStatus,
@@ -88,6 +89,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
   const [mode, setMode] = useState<"standard" | "rfp">("standard");
   const [rfpStage, setRfpStage] = useState<RfpStage>("questions");
   const [isRfpJob, setIsRfpJob] = useState(false);
+  const [rfpAllowed, setRfpAllowed] = useState<boolean | null>(null);
   const [step, setStep] = useState<1 | 2 | 3>(initialJobId ? 3 : 1);
   const [title, setTitle] = useState("");
   const [audience, setAudience] = useState("");
@@ -132,6 +134,38 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
     setRfpZip(null);
     setRfpFiles([]);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadFlags() {
+      if (!user?.sub) {
+        setRfpAllowed(false);
+        return;
+      }
+      try {
+        const flags = await fetchFeatureFlags();
+        if (!cancelled) {
+          const features = Array.isArray(flags?.features) ? flags.features : [];
+          setRfpAllowed(features.includes("rfp"));
+        }
+      } catch (err) {
+        console.error(err);
+        if (!cancelled) {
+          setRfpAllowed(false);
+        }
+      }
+    }
+    loadFlags();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.sub]);
+
+  useEffect(() => {
+    if (rfpAllowed === false && mode === "rfp") {
+      setMode("standard");
+    }
+  }, [rfpAllowed, mode]);
 
   const clearNotice = useCallback(() => {
     if (noticeTimeoutRef.current) {
@@ -1480,17 +1514,19 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
             >
               Standard document
             </button>
-            <button
-              type="button"
-              className={`rounded-full px-5 py-2 text-sm font-semibold transition ${
-                mode === "rfp"
-                  ? "bg-white text-slate-900"
-                  : "border border-white/40 text-white/80 hover:border-white"
-              }`}
-              onClick={() => handleModeChange("rfp")}
-            >
-              RFP response
-            </button>
+            {rfpAllowed ? (
+              <button
+                type="button"
+                className={`rounded-full px-5 py-2 text-sm font-semibold transition ${
+                  mode === "rfp"
+                    ? "bg-white text-slate-900"
+                    : "border border-white/40 text-white/80 hover:border-white"
+                }`}
+                onClick={() => handleModeChange("rfp")}
+              >
+                RFP response
+              </button>
+            ) : null}
           </div>
           <div className="grid gap-8 md:grid-cols-2">
             {mode === "standard" ? (

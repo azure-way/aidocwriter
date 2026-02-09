@@ -238,6 +238,10 @@ export async function fetchCompanyProfile() {
   return request("/profile/company", { auth: true });
 }
 
+export async function fetchFeatureFlags() {
+  return request("/profile/features", { auth: true });
+}
+
 export async function saveCompanyProfile(
   profile: Record<string, unknown>,
   mcpConfig?: { base_url?: string; resource_path?: string; tool_path?: string }

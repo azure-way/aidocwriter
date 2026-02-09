@@ -234,6 +234,7 @@ module "app" {
     SERVICE_BUS_TOPIC_STATUS         = module.service_bus.topic_name
     SERVICE_BUS_STATUS_SUBSCRIPTION  = "status-writer"
     AZURE_BLOB_CONTAINER             = "docwriter"
+    DOCWRITER_FEATURE_FLAGS_TABLE    = "DocWriterFeatureFlags"
     AUTH0_ISSUER_BASE_URL            = var.auth0_issuer_base_url
     AUTH0_AUDIENCE                   = var.auth0_audience
   }
@@ -271,6 +272,7 @@ module "app" {
     SERVICE_BUS_STATUS_SUBSCRIPTION   = "status-writer"
     AZURE_BLOB_CONTAINER              = "docwriter"
     DOCWRITER_STATUS_TABLE            = "DocWriterStatus"
+    DOCWRITER_FEATURE_FLAGS_TABLE     = "DocWriterFeatureFlags"
     DOCWRITER_PLANTUML_REFORMAT_MODEL = "gpt-5.1-codex"
     DOCWRITER_WRITE_BATCH_SIZE        = "4"
     DOCWRITER_DEFAULT_LENGTH_PAGES    = "20"

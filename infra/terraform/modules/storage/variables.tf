@@ -21,6 +21,11 @@ variable "container_name" {
   default = "docwriter"
 }
 
+variable "feature_flags_table_name" {
+  type    = string
+  default = "DocWriterFeatureFlags"
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

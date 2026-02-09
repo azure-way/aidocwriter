@@ -96,6 +96,7 @@ class Settings:
     status_table_name: str = os.getenv("DOCWRITER_STATUS_TABLE", "DocWriterStatus")
     documents_table_name: str = os.getenv("DOCWRITER_DOCUMENTS_TABLE", "DocWriterDocuments")
     company_profiles_table_name: str = os.getenv("DOCWRITER_COMPANY_PROFILES_TABLE", "DocWriterCompanyProfiles")
+    feature_flags_table_name: str = os.getenv("DOCWRITER_FEATURE_FLAGS_TABLE", "DocWriterFeatureFlags")
     auth0_issuer_base_url: str | None = None
     auth0_audience: str | None = None
 
@@ -164,6 +165,7 @@ class Settings:
             status_table_name=env.get("DOCWRITER_STATUS_TABLE", cls.status_table_name),
             documents_table_name=env.get("DOCWRITER_DOCUMENTS_TABLE", cls.documents_table_name),
             company_profiles_table_name=env.get("DOCWRITER_COMPANY_PROFILES_TABLE", cls.company_profiles_table_name),
+            feature_flags_table_name=env.get("DOCWRITER_FEATURE_FLAGS_TABLE", cls.feature_flags_table_name),
             auth0_issuer_base_url=env.get("AUTH0_ISSUER_BASE_URL", cls.auth0_issuer_base_url),
             auth0_audience=env.get("AUTH0_AUDIENCE", cls.auth0_audience),
             mcp_base_url=env.get("MCP_BASE_URL", cls.mcp_base_url),

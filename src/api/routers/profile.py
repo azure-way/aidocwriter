@@ -6,6 +6,7 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status, Header
 
 from docwriter.company_profile_store import get_company_profile_store
+from docwriter.feature_flags_store import get_feature_flags_store
 from docwriter.profile_extract import extract_profile_text
 from docwriter.agents.core_company_profile import CoreCompanyProfileAgent
 from docwriter.storage import BlobStore
@@ -17,6 +18,7 @@ from ..models import (
     CompanyProfileResponse,
     CompanyProfileSource,
     CompanyProfile,
+    FeatureFlagsResponse,
     McpDiscoverRequest,
     McpDiscoverResponse,
     McpResourceEntry,
@@ -74,6 +76,12 @@ def get_company_profile(user_id: str = Depends(current_user_dependency)) -> Comp
         updated=record.get("updated"),
         mcp_config=mcp_config,
     )
+
+
+@router.get("/features", response_model=FeatureFlagsResponse)
+def get_feature_flags(user_id: str = Depends(current_user_dependency)) -> FeatureFlagsResponse:
+    store = get_feature_flags_store()
+    return FeatureFlagsResponse(features=store.list_features(user_id))
 
 
 @router.put("/company", response_model=CompanyProfileResponse)

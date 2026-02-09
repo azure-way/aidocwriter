@@ -16,6 +16,7 @@ from docwriter.mcp_client import McpClient
 from docwriter.storage import BlobStore, JobStoragePaths
 from docwriter.status_store import get_status_table_store
 from docwriter.document_index import get_document_index_store
+from docwriter.feature_flags_store import get_feature_flags_store
 
 from ..deps import blob_store_dependency, current_user_dependency
 from ..models import (
@@ -168,6 +169,9 @@ if _multipart_available:
         user_id: str = Depends(current_user_dependency),
         store: BlobStore = Depends(blob_store_dependency),
     ) -> JobCreateResponse:
+        flags = get_feature_flags_store()
+        if not flags.is_allowed("rfp", user_id):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="RFP access is not enabled")
         incoming: list[tuple[str, bytes, str]] = []
         if file is not None:
             data = file.file.read()

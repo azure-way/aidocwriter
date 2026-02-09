@@ -14,6 +14,11 @@ resource "azurerm_storage_container" "documents" {
   container_access_type = "private"
 }
 
+resource "azurerm_storage_table" "feature_flags" {
+  name                 = var.feature_flags_table_name
+  storage_account_name = azurerm_storage_account.main.name
+}
+
 resource "azurerm_key_vault_secret" "secret_1" {
   name         = "storage-connection-string"
   value        = azurerm_storage_account.main.primary_connection_string
