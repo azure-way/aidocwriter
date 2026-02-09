@@ -1320,6 +1320,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
             />
             <JobQuickLinks
               jobId={jobId}
+              documentTitle={documentTitle}
               statusStage={
                 status?.stage ? formatStage(normalizeStageName(status.stage)) : null
               }

@@ -3,6 +3,7 @@ import { MetadataEntry } from "@/components/MetadataGrid";
 
 type JobQuickLinksProps = {
   jobId: string | null;
+  documentTitle?: string | null;
   statusStage?: string | null;
   statusCycle?: number | null;
   metadata: MetadataEntry[];
@@ -13,6 +14,7 @@ type JobQuickLinksProps = {
 
 export const JobQuickLinks: FC<JobQuickLinksProps> = ({
   jobId,
+  documentTitle,
   statusStage,
   statusCycle,
   metadata,
@@ -24,6 +26,9 @@ export const JobQuickLinks: FC<JobQuickLinksProps> = ({
     <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
       <div>
         <p className="text-xs font-semibold uppercase tracking-[0.35em] text-indigo-400/80">Active Job</p>
+        {documentTitle ? (
+          <p className="mt-2 text-sm font-semibold text-slate-700">{documentTitle}</p>
+        ) : null}
         <h3 className="mt-1 text-xl font-semibold text-slate-800">Pipeline snapshot</h3>
         <p className="text-xs text-slate-500">We’ll update this view as workers report back.</p>
       </div>
