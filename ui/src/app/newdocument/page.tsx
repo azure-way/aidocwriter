@@ -52,6 +52,8 @@ type JobDashboardProps = {
   initialJobId?: string;
 };
 
+type RfpStage = "questions" | "offer";
+
 const POLL_INTERVAL_MS = 20000;
 const SUMMARY_STAGE_ORDER = [
   "ENQUEUED",
@@ -84,6 +86,8 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
   const { user, isLoading: authLoading, error: authError } = useUser();
   const primaryButtonClass = "btn-primary";
   const [mode, setMode] = useState<"standard" | "rfp">("standard");
+  const [rfpStage, setRfpStage] = useState<RfpStage>("questions");
+  const [isRfpJob, setIsRfpJob] = useState(false);
   const [step, setStep] = useState<1 | 2 | 3>(initialJobId ? 3 : 1);
   const [title, setTitle] = useState("");
   const [audience, setAudience] = useState("");
@@ -94,6 +98,8 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [followupQuestions, setFollowupQuestions] = useState<IntakeQuestion[]>([]);
   const [followupAnswers, setFollowupAnswers] = useState<Record<string, string>>({});
+  const [answersUploadWarningCount, setAnswersUploadWarningCount] = useState(0);
+  const [answersUploadError, setAnswersUploadError] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(initialJobId ?? null);
   const [status, setStatus] = useState<StatusPayload | null>(null);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
@@ -116,6 +122,9 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
 
   const handleModeChange = useCallback((next: "standard" | "rfp") => {
     setMode(next);
+    if (next === "rfp") {
+      setRfpStage("questions");
+    }
     setStep(1);
     setError(null);
     setQuestions([]);
@@ -154,6 +163,21 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
     clearNotice();
     setJobId((prev) => (prev === initialJobId ? prev : initialJobId));
   }, [initialJobId, clearNotice]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!jobId) {
+      setIsRfpJob(false);
+      return;
+    }
+    const stored = window.localStorage.getItem(`rfp-stage:${jobId}`);
+    if (stored === "questions" || stored === "offer") {
+      setRfpStage(stored);
+      setIsRfpJob(true);
+    } else {
+      setIsRfpJob(false);
+    }
+  }, [jobId]);
 
   useEffect(() => {
     if (!title.trim()) {
@@ -210,6 +234,8 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
               defaults[q.id] = q.sample ?? "";
             });
             setFollowupAnswers(defaults);
+            setAnswersUploadWarningCount(0);
+            setAnswersUploadError(null);
           } catch (err) {
             console.error(err);
           } finally {
@@ -218,6 +244,8 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
         } else {
           setFollowupQuestions([]);
           setFollowupAnswers({});
+          setAnswersUploadWarningCount(0);
+          setAnswersUploadError(null);
         }
       } catch (e) {
         console.error(e);
@@ -305,6 +333,10 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
       });
       setDocumentTitle("RFP Response");
       const id = response.job_id as string;
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(`rfp-stage:${id}`, rfpStage);
+      }
+      setIsRfpJob(true);
       setJobId(id);
       setStep(3);
       setTimeline([]);
@@ -338,6 +370,15 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
   const disableSubmit = useMemo(() => {
     return Object.values(answers).some((ans) => !ans.trim());
   }, [answers]);
+
+  const clipboardSupported = useMemo(() => {
+    if (typeof navigator === "undefined") return false;
+    return typeof navigator.clipboard?.writeText === "function";
+  }, []);
+
+  const questionCopyText = useMemo(() => {
+    return followupQuestions.map((q) => `${q.id}: ${q.q}`).join("\n");
+  }, [followupQuestions]);
 
   const sortedTimeline = useMemo(() => {
     const copy = [...timeline];
@@ -884,6 +925,123 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
     [showNotice, resolveFileBaseName]
   );
 
+  const downloadRfpQuestionsJson = useCallback(() => {
+    if (!followupQuestions.length) return;
+    const blob = new Blob([JSON.stringify(followupQuestions, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "rfp-questions.json";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showNotice("Questions downloaded");
+  }, [followupQuestions, showNotice]);
+
+  const copyRfpQuestions = useCallback(async () => {
+    if (!clipboardSupported || !questionCopyText) return;
+    try {
+      await navigator.clipboard.writeText(questionCopyText);
+      showNotice("Questions copied");
+    } catch (err) {
+      console.error(err);
+      setError("Failed to copy questions");
+    }
+  }, [clipboardSupported, questionCopyText, showNotice]);
+
+  const applyUploadedAnswers = useCallback(
+    (incoming: Record<string, string>) => {
+      if (!incoming || !Object.keys(incoming).length) return;
+      setFollowupAnswers((prev) => ({ ...prev, ...incoming }));
+    },
+    []
+  );
+
+  const parseAnswersFile = useCallback(
+    async (file: File) => {
+      setAnswersUploadError(null);
+      setAnswersUploadWarningCount(0);
+      const text = (await file.text()).trim();
+      if (!text) {
+        setAnswersUploadError("Uploaded file is empty.");
+        return;
+      }
+      const knownIds = new Set(followupQuestions.map((q) => q.id));
+      const incoming: Record<string, string> = {};
+      let ignored = 0;
+      try {
+        if (file.name.toLowerCase().endsWith(".json") || text.startsWith("{") || text.startsWith("[")) {
+          const data = JSON.parse(text) as unknown;
+          if (Array.isArray(data)) {
+            data.forEach((item) => {
+              if (!item || typeof item !== "object") return;
+              const rawId = (item as { id?: unknown }).id;
+              const rawAnswer = (item as { answer?: unknown }).answer;
+              const id = rawId == null ? "" : String(rawId).trim();
+              const answer = rawAnswer == null ? "" : String(rawAnswer).trim();
+              if (!id || !answer) return;
+              if (!knownIds.has(id)) {
+                ignored += 1;
+                return;
+              }
+              incoming[id] = answer;
+            });
+          } else if (data && typeof data === "object") {
+            Object.entries(data as Record<string, unknown>).forEach(([key, value]) => {
+              const id = String(key).trim();
+              const answer = value == null ? "" : String(value).trim();
+              if (!id || !answer) return;
+              if (!knownIds.has(id)) {
+                ignored += 1;
+                return;
+              }
+              incoming[id] = answer;
+            });
+          } else {
+            setAnswersUploadError("Unsupported JSON format.");
+            return;
+          }
+        } else {
+          const lines = text.split(/\r?\n/).filter((line) => line.trim());
+          if (lines.length < 2) {
+            setAnswersUploadError("CSV must include headers and at least one row.");
+            return;
+          }
+          const headers = lines[0].split(",").map((cell) => cell.trim().toLowerCase());
+          const idIndex = headers.indexOf("id");
+          const answerIndex = headers.indexOf("answer");
+          if (idIndex === -1 || answerIndex === -1) {
+            setAnswersUploadError("CSV headers must include id,answer.");
+            return;
+          }
+          lines.slice(1).forEach((line) => {
+            const cells = line.split(",");
+            const id = (cells[idIndex] ?? "").trim();
+            const answer = (cells[answerIndex] ?? "").trim();
+            if (!id || !answer) return;
+            if (!knownIds.has(id)) {
+              ignored += 1;
+              return;
+            }
+            incoming[id] = answer;
+          });
+        }
+      } catch (err) {
+        console.error(err);
+        setAnswersUploadError("Unable to parse answers file.");
+        return;
+      }
+      applyUploadedAnswers(incoming);
+      if (ignored > 0) {
+        setAnswersUploadWarningCount(ignored);
+      }
+    },
+    [applyUploadedAnswers, followupQuestions]
+  );
+
   const renderArtifactActions = useCallback(
     (path: string, size: "sm" | "md" = "md", stageBase?: string) => {
       const fileName = path.split("/").pop() ?? path;
@@ -1399,6 +1557,38 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
                     Upload multiple PDFs/DOCX/XLSX if you prefer.
                   </p>
                 </div>
+                <div className="space-y-3 md:col-span-2">
+                  <label className="text-xs font-semibold uppercase tracking-[0.4em] text-white/70">
+                    RFP stage
+                  </label>
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+                        rfpStage === "questions"
+                          ? "bg-white text-slate-900"
+                          : "border border-white/40 text-white/80 hover:border-white"
+                      }`}
+                      onClick={() => setRfpStage("questions")}
+                    >
+                      Initial step: prepare questions
+                    </button>
+                    <button
+                      type="button"
+                      className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+                        rfpStage === "offer"
+                          ? "bg-white text-slate-900"
+                          : "border border-white/40 text-white/80 hover:border-white"
+                      }`}
+                      onClick={() => setRfpStage("offer")}
+                    >
+                      Offer stage: client answered
+                    </button>
+                  </div>
+                  <p className="text-xs text-white/70">
+                    Choose how you want to handle the RFP questions after upload.
+                  </p>
+                </div>
               </>
             )}
           </div>
@@ -1427,7 +1617,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
             ) : (
               <button
                 className={`${primaryButtonClass} w-full md:w-auto`}
-                disabled={loading || (!rfpZip && rfpFiles.length === 0)}
+                disabled={loading || (!rfpZip && rfpFiles.length === 0) || !rfpStage}
                 onClick={handleSubmitRfp}
               >
                 {loading ? "Uploading..." : "Upload RFP & start"}
@@ -1477,7 +1667,117 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
 
       {step === 3 && (
         <div className="space-y-6">
-          {status?.stage &&
+          {status?.stage && normalizeStageName(status.stage) === "INTAKE_READY" && isRfpJob ? (
+            <GlassCard className="space-y-6 rounded-[32px] bg-gradient-to-br from-white/95 via-indigo-50/95 to-sky-100/90 px-10 py-10 text-slate-700">
+              <GradientTitle
+                title="RFP questions ready"
+                subtitle="Review the generated questions and decide how to proceed."
+                className="bg-gradient-to-r from-purple-400 via-pink-300 to-sky-400 text-transparent"
+                subtitleClassName="text-slate-500"
+              />
+              {loadingFollowups ? (
+                <p className="text-sm text-slate-500">Loading questions…</p>
+              ) : followupQuestions.length === 0 ? (
+                <p className="text-sm text-slate-500">No questions available yet.</p>
+              ) : (
+                <>
+                  <div className="space-y-4">
+                    {followupQuestions.map((question) => (
+                      <div key={question.id} className="space-y-1.5 rounded-2xl border border-slate-200 bg-white/80 px-4 py-3">
+                        <p className="text-xs font-semibold uppercase tracking-[0.4em] text-slate-400">
+                          {question.id}
+                        </p>
+                        <p className="text-sm text-slate-700">{question.q}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {rfpStage === "questions" ? (
+                    <div className="space-y-3 rounded-2xl border border-slate-200 bg-white/80 p-4">
+                      <p className="text-sm text-slate-600">
+                        Send these questions to the client. Responses can be entered later to resume the workflow.
+                      </p>
+                      <div className="flex flex-wrap gap-3">
+                        <button
+                          type="button"
+                          className={`${primaryButtonClass} w-full md:w-auto`}
+                          disabled={!clipboardSupported || !followupQuestions.length}
+                          onClick={copyRfpQuestions}
+                          title={clipboardSupported ? undefined : "Clipboard not available"}
+                        >
+                          Copy questions
+                        </button>
+                        <button
+                          type="button"
+                          className={`${primaryButtonClass} w-full md:w-auto`}
+                          disabled={!followupQuestions.length}
+                          onClick={downloadRfpQuestionsJson}
+                        >
+                          Download JSON
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-6">
+                      <div className="space-y-3 rounded-2xl border border-slate-200 bg-white/80 p-4">
+                        <label className="text-xs font-semibold uppercase tracking-[0.4em] text-slate-400">
+                          Upload answers (JSON or CSV)
+                        </label>
+                        <input
+                          type="file"
+                          accept=".json,.csv"
+                          className="input-glass border-slate-200 bg-white/95 text-slate-900 file:mr-4 file:rounded-full file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0] || null;
+                            if (file) {
+                              void parseAnswersFile(file);
+                            }
+                          }}
+                        />
+                        <div className="space-y-1 text-xs text-slate-500">
+                          <p>
+                            Accepted JSON: {"{ \"QUESTION_ID\": \"answer\" }"} or {"[{ \"id\": \"Q1\", \"answer\": \"...\" }]"}
+                          </p>
+                          <p>CSV headers must include id,answer.</p>
+                        </div>
+                        {answersUploadError ? <p className="text-xs text-red-500">{answersUploadError}</p> : null}
+                        {answersUploadWarningCount > 0 ? (
+                          <p className="text-xs text-amber-600">
+                            {answersUploadWarningCount} answers ignored (unknown question IDs).
+                          </p>
+                        ) : null}
+                      </div>
+                      <div className="space-y-6">
+                        {followupQuestions.map((question) => (
+                          <div key={question.id} className="space-y-2">
+                            <label className="text-xs font-semibold uppercase tracking-[0.4em] text-slate-400">
+                              {question.q}
+                            </label>
+                            <textarea
+                              className="textarea-glass"
+                              value={followupAnswers[question.id] ?? ""}
+                              onChange={(e) =>
+                                setFollowupAnswers((prev) => ({ ...prev, [question.id]: e.target.value }))
+                              }
+                              placeholder="Type your response..."
+                            />
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex flex-col gap-4 md:flex-row md:justify-end">
+                        <button
+                          className={`${primaryButtonClass} w-full md:w-auto`}
+                          disabled={submittingFollowups || loadingFollowups || followupQuestions.length === 0}
+                          onClick={handleSubmitFollowups}
+                        >
+                          {submittingFollowups ? "Submitting..." : "Submit answers & start response"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </GlassCard>
+          ) : status?.stage &&
           ["INTAKE_READY", "CLARIFY_READY"].includes(normalizeStageName(status.stage)) ? (
             <GlassCard className="space-y-6 rounded-[32px] bg-gradient-to-br from-white/95 via-indigo-50/95 to-sky-100/90 px-10 py-10 text-slate-700">
               <GradientTitle
