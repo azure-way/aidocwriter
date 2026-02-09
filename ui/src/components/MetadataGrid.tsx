@@ -24,7 +24,7 @@ export const MetadataGrid: FC<MetadataGridProps> = ({
     return null;
   }
 
-  const baseClasses = "grid gap-x-6 gap-y-3 text-xs text-slate-500 sm:grid-cols-2";
+  const baseClasses = "grid gap-x-6 gap-y-3 text-[11px] text-slate-500 sm:grid-cols-2 sm:text-xs";
   const combinedClassName = className ? `${baseClasses} ${className}` : baseClasses;
 
   return (
@@ -32,7 +32,7 @@ export const MetadataGrid: FC<MetadataGridProps> = ({
       {entries.map(({ label, value }, index) => (
         <div key={`${label}-${index}`} className={itemClassName}>
           <span className="font-semibold text-slate-600">{label}</span>
-          <span className="break-words">{value}</span>
+          <span className="break-all">{value}</span>
         </div>
       ))}
     </div>

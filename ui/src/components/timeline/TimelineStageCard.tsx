@@ -108,8 +108,8 @@ export const TimelineStageCard: FC<TimelineStageCardProps> = ({
       active && event.sourceStage && event.sourceStage !== event.stage ? formatStage(event.sourceStage) : undefined;
 
     return (
-      <div className="flex items-start gap-4 rounded-2xl bg-white/70 px-4 py-3 shadow-sm">
-        <span className={`flex h-8 w-8 items-center justify-center rounded-full text-sm	font-semibold ${badgeClass}`}>
+      <div className="flex items-start gap-3 rounded-2xl bg-white/70 px-3 py-3 shadow-sm sm:gap-4 sm:px-4">
+        <span className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${badgeClass} sm:h-8 sm:w-8 sm:text-sm`}>
           {index + 1}
         </span>
         <div className="flex-1 space-y-3">
@@ -139,16 +139,16 @@ export const TimelineStageCard: FC<TimelineStageCardProps> = ({
               {showCycles ? (
                 <>
                   <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                    <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600">
+                    <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-slate-600 sm:px-3">
                       {completedCycles}/{totalCycles} cycles complete
                     </span>
                     {runningCycleNumber ? (
-                      <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-indigo-600">
+                      <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-indigo-600 sm:px-3">
                         Running cycle: {runningCycleNumber}
                       </span>
                     ) : null}
                     {failedCycleNumber ? (
-                      <span className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-rose-700">
+                      <span className="rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-rose-700 sm:px-3">
                         Attention: Cycle {failedCycleNumber}
                       </span>
                     ) : null}
@@ -170,7 +170,7 @@ export const TimelineStageCard: FC<TimelineStageCardProps> = ({
                       return (
                         <div
                           key={`cycle-${cycleDetail.cycle}`}
-                          className={`rounded-2xl px-4 py-3 shadow-inner shadow-white/30 transition ${statusStyle.container}`}
+                          className={`rounded-2xl px-3 py-3 shadow-inner shadow-white/30 transition sm:px-4 ${statusStyle.container}`}
                         >
                           <button
                             type="button"
@@ -210,7 +210,7 @@ export const TimelineStageCard: FC<TimelineStageCardProps> = ({
                                 </p>
                               ) : null}
                             </div>
-                            <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusStyle.badge}`}>
+                            <span className={`rounded-full px-2.5 py-1 text-xs font-medium sm:px-3 ${statusStyle.badge}`}>
                               {statusChipLabel}
                             </span>
                             <span className="text-lg text-slate-500">{isCycleExpanded ? "−" : "+"}</span>
@@ -227,7 +227,7 @@ export const TimelineStageCard: FC<TimelineStageCardProps> = ({
                                 return (
                                   <div
                                     key={`cycle-${cycleDetail.cycle}-${substep.stage}`}
-                                    className="rounded-xl border border-slate-200 bg-white/90 px-4 py-3"
+                                    className="rounded-xl border border-slate-200 bg-white/90 px-3 py-3 sm:px-4"
                                   >
                                     <button
                                       type="button"
@@ -255,7 +255,7 @@ export const TimelineStageCard: FC<TimelineStageCardProps> = ({
                                         ) : null}
                                       </div>
                                       <span
-                                        className={`rounded-full px-3 py-1 text-xs font-medium ${subStatusStyle.badge}`}
+                                        className={`rounded-full px-2.5 py-1 text-xs font-medium sm:px-3 ${subStatusStyle.badge}`}
                                       >
                                         {subStatusLabel}
                                       </span>
@@ -316,8 +316,8 @@ export const TimelineStageCard: FC<TimelineStageCardProps> = ({
     active && event.sourceStage && event.sourceStage !== event.stage ? formatStage(event.sourceStage) : undefined;
 
   return (
-    <div className="flex items-start gap-4 rounded-2xl bg-white/70 px-4 py-3 shadow-sm">
-      <span className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${badgeClass}`}>
+    <div className="flex items-start gap-3 rounded-2xl bg-white/70 px-3 py-3 shadow-sm sm:gap-4 sm:px-4">
+      <span className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${badgeClass} sm:h-8 sm:w-8 sm:text-sm`}>
         {index + 1}
       </span>
       <div className="flex-1 space-y-3">
@@ -347,16 +347,16 @@ export const TimelineStageCard: FC<TimelineStageCardProps> = ({
             {showCycles && totalCycles > 0 ? (
               <>
                 <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                  <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600">
+                  <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-slate-600 sm:px-3">
                     {completedCycles}/{totalCycles} cycles complete
                   </span>
                   {activeCycleDetail ? (
-                    <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-indigo-600">
+                    <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-indigo-600 sm:px-3">
                       Running cycle: {activeCycleDetail.cycle}
                     </span>
                   ) : null}
                   {failedCycleDetail ? (
-                    <span className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-rose-700">
+                    <span className="rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-rose-700 sm:px-3">
                       Attention: Cycle {failedCycleDetail.cycle}
                     </span>
                   ) : null}
@@ -369,7 +369,7 @@ export const TimelineStageCard: FC<TimelineStageCardProps> = ({
                     return (
                       <div
                         key={`cycle-${detail.cycle}`}
-                        className={`rounded-2xl px-4 py-3 shadow-inner shadow-white/30 transition ${statusStyle.container}`}
+                        className={`rounded-2xl px-3 py-3 shadow-inner shadow-white/30 transition sm:px-4 ${statusStyle.container}`}
                       >
                         <button
                           type="button"
@@ -395,7 +395,7 @@ export const TimelineStageCard: FC<TimelineStageCardProps> = ({
                               </p>
                             ) : null}
                           </div>
-                          <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusStyle.badge}`}>
+                          <span className={`rounded-full px-2.5 py-1 text-xs font-medium sm:px-3 ${statusStyle.badge}`}>
                             {statusChipLabel}
                           </span>
                           <span className="text-lg text-slate-500">{isCycleExpanded ? "−" : "+"}</span>

@@ -1215,7 +1215,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
       ) : null}
 
       {step === 1 && (
-        <div className="space-y-8 rounded-[32px] border border-white/25 bg-gradient-to-br from-slate-900 via-blue-900 to-sky-800 px-10 py-10 text-white shadow-[0_45px_140px_rgba(15,23,42,0.45)]">
+        <div className="space-y-8 rounded-[32px] border border-white/25 bg-gradient-to-br from-slate-900 via-blue-900 to-sky-800 px-4 py-8 text-white shadow-[0_45px_140px_rgba(15,23,42,0.45)] sm:px-8 sm:py-10 lg:px-10">
           <div className="space-y-2">
             <h2 className="text-3xl font-semibold text-white">Document details</h2>
             <p className="text-sm text-white/80">
@@ -1272,7 +1272,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
       )}
 
       {step === 2 && (
-        <GlassCard className="space-y-8 rounded-[32px] bg-gradient-to-br from-white/95 via-indigo-50/95 to-sky-100/90 px-10 py-10 text-slate-700">
+        <GlassCard className="space-y-8 rounded-[32px] bg-gradient-to-br from-white/95 via-indigo-50/95 to-sky-100/90 px-4 py-8 text-slate-700 sm:px-8 sm:py-10 lg:px-10">
           <GradientTitle
             title="Answer intake questions"
             subtitle="Provide as much context as possible. These answers guide planning and writing."
@@ -1311,7 +1311,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
 
       {step === 3 && (
         <div className="space-y-6">
-          <GlassCard className="space-y-6 rounded-[32px] bg-gradient-to-br from-white/95 via-indigo-50/95 to-sky-100/90 px-10 py-10 text-slate-700">
+          <GlassCard className="space-y-6 rounded-[32px] bg-gradient-to-br from-white/95 via-indigo-50/95 to-sky-100/90 px-4 py-8 text-slate-700 sm:px-8 sm:py-10 lg:px-10">
             <GradientTitle
               title="Job submitted"
               subtitle="We’re orchestrating the planner, writer, and reviewer agents. The checkpoints below update automatically."
@@ -1347,7 +1347,7 @@ export function JobDashboard({ initialJobId }: JobDashboardProps) {
 export default function NewDocumentPage() {
   return (
     <div className="space-y-12">
-      <section className="space-y-6 rounded-[32px] border border-white/25 bg-gradient-to-br from-slate-900 via-blue-900 to-sky-700 p-10 text-white shadow-[0_45px_140px_rgba(15,23,42,0.4)]">
+      <section className="space-y-6 rounded-[32px] border border-white/25 bg-gradient-to-br from-slate-900 via-blue-900 to-sky-700 px-4 py-10 text-white shadow-[0_45px_140px_rgba(15,23,42,0.4)] sm:px-8 lg:p-10">
         <p className="text-sm uppercase tracking-[0.35em] text-white/80">New document</p>
         <h1 className="text-4xl font-semibold">Launch a DocWriter pipeline</h1>
         <p className="text-lg text-white/80">
