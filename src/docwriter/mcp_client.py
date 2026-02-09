@@ -95,3 +95,23 @@ class McpClient:
             except Exception:
                 continue
         return False
+
+    def list_resources(self, base_url: str, token: str | None = None) -> Optional[Dict[str, Any]]:
+        if not base_url:
+            return None
+        url = f"{base_url.rstrip('/')}/resources"
+        resp = requests.get(url, headers=self._headers(token), timeout=15)
+        if resp.status_code >= 400:
+            return None
+        data = resp.json()
+        return data if isinstance(data, dict) else None
+
+    def list_tools(self, base_url: str, token: str | None = None) -> Optional[Dict[str, Any]]:
+        if not base_url:
+            return None
+        url = f"{base_url.rstrip('/')}/tools"
+        resp = requests.get(url, headers=self._headers(token), timeout=15)
+        if resp.status_code >= 400:
+            return None
+        data = resp.json()
+        return data if isinstance(data, dict) else None

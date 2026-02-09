@@ -130,3 +130,24 @@ class CompanyProfileResponse(BaseModel):
     sources: List[CompanyProfileSource]
     updated: Optional[float] = None
     mcp_config: Optional[Dict[str, str]] = None
+
+
+class McpDiscoverRequest(BaseModel):
+    base_url: str
+
+
+class McpResourceEntry(BaseModel):
+    name: str
+    path: str
+    description: Optional[str] = None
+
+
+class McpToolEntry(BaseModel):
+    name: str
+    path: str
+    description: Optional[str] = None
+
+
+class McpDiscoverResponse(BaseModel):
+    resources: List[McpResourceEntry]
+    tools: List[McpToolEntry]

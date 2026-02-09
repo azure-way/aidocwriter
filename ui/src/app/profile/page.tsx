@@ -4,7 +4,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { GlassCard } from "@/components/GlassCard";
 import { GradientTitle } from "@/components/GradientTitle";
 import { useUser } from "@auth0/nextjs-auth0/client";
-import { fetchCompanyProfile, saveCompanyProfile, uploadCompanyProfileDoc } from "@/lib/api";
+import {
+  discoverMcp,
+  fetchCompanyProfile,
+  saveCompanyProfile,
+  uploadCompanyProfileDoc,
+} from "@/lib/api";
 
 type CompanyReference = {
   title: string;
@@ -62,6 +67,10 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoverError, setDiscoverError] = useState<string | null>(null);
+  const [mcpResources, setMcpResources] = useState<Array<{ name: string; path: string }>>([]);
+  const [mcpTools, setMcpTools] = useState<Array<{ name: string; path: string }>>([]);
 
   const loadProfile = useCallback(async () => {
     if (!user?.sub) return;
@@ -114,6 +123,24 @@ export default function ProfilePage() {
     },
     [profile, sources, updated]
   );
+
+  const handleDiscover = useCallback(async () => {
+    if (!mcpConfig.base_url.trim()) {
+      setDiscoverError("Enter a base URL first.");
+      return;
+    }
+    setDiscovering(true);
+    setDiscoverError(null);
+    try {
+      const data = await discoverMcp(mcpConfig.base_url.trim());
+      setMcpResources(data.resources ?? []);
+      setMcpTools(data.tools ?? []);
+    } catch (err) {
+      setDiscoverError(err instanceof Error ? err.message : "Failed to discover MCP endpoints");
+    } finally {
+      setDiscovering(false);
+    }
+  }, [mcpConfig.base_url]);
 
   const formattedUpdated = useMemo(() => {
     if (!updated) return "—";
@@ -170,6 +197,12 @@ export default function ProfilePage() {
       <GlassCard className="space-y-4">
         <h2 className="text-lg font-semibold text-slate-900">MCP connection</h2>
         <div className="grid gap-6 md:grid-cols-2">
+          <div className="md:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+            <p className="font-semibold text-slate-700">Example configuration</p>
+            <p>Base URL: https://mcp.acme.internal</p>
+            <p>Resource path: resources/company.profile</p>
+            <p>Tool path: tools/company.query</p>
+          </div>
           <div className="space-y-2">
             <label className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">
               Base URL
@@ -181,27 +214,68 @@ export default function ProfilePage() {
               placeholder="https://mcp.example.com"
             />
           </div>
+          <div className="flex items-end gap-3">
+            <button
+              type="button"
+              className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400"
+              onClick={handleDiscover}
+              disabled={discovering}
+            >
+              {discovering ? "Discovering…" : "Auto-discover"}
+            </button>
+            {discoverError ? <span className="text-xs text-red-500">{discoverError}</span> : null}
+          </div>
           <div className="space-y-2">
             <label className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">
               Resource path
             </label>
-            <input
-              className="input-glass"
-              value={mcpConfig.resource_path}
-              onChange={(e) => setMcpConfig((prev) => ({ ...prev, resource_path: e.target.value }))}
-              placeholder="resources/company.profile"
-            />
+            {mcpResources.length ? (
+              <select
+                className="input-glass"
+                value={mcpConfig.resource_path}
+                onChange={(e) => setMcpConfig((prev) => ({ ...prev, resource_path: e.target.value }))}
+              >
+                <option value="">Select a resource</option>
+                {mcpResources.map((item) => (
+                  <option key={item.path} value={item.path}>
+                    {item.name || item.path}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                className="input-glass"
+                value={mcpConfig.resource_path}
+                onChange={(e) => setMcpConfig((prev) => ({ ...prev, resource_path: e.target.value }))}
+                placeholder="resources/company.profile"
+              />
+            )}
           </div>
           <div className="space-y-2">
             <label className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">
               Tool path
             </label>
-            <input
-              className="input-glass"
-              value={mcpConfig.tool_path}
-              onChange={(e) => setMcpConfig((prev) => ({ ...prev, tool_path: e.target.value }))}
-              placeholder="tools/company.query"
-            />
+            {mcpTools.length ? (
+              <select
+                className="input-glass"
+                value={mcpConfig.tool_path}
+                onChange={(e) => setMcpConfig((prev) => ({ ...prev, tool_path: e.target.value }))}
+              >
+                <option value="">Select a tool</option>
+                {mcpTools.map((item) => (
+                  <option key={item.path} value={item.path}>
+                    {item.name || item.path}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                className="input-glass"
+                value={mcpConfig.tool_path}
+                onChange={(e) => setMcpConfig((prev) => ({ ...prev, tool_path: e.target.value }))}
+                placeholder="tools/company.query"
+              />
+            )}
           </div>
           <div className="text-sm text-slate-500">
             MCP uses your IDP access token from the current session. Health probe checks `/healthz` then `/health`.

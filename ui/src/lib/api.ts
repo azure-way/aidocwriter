@@ -268,6 +268,14 @@ export async function uploadCompanyProfileDoc(file: File) {
   return res.json();
 }
 
+export async function discoverMcp(baseUrl: string) {
+  return request("/profile/mcp/discover", {
+    method: "POST",
+    body: JSON.stringify({ base_url: baseUrl }),
+    auth: true,
+  });
+}
+
 export async function fetchJobStatus(jobId: string) {
   return request(`/jobs/${jobId}/status`, { auth: true });
 }

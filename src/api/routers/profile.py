@@ -12,7 +12,16 @@ from docwriter.storage import BlobStore
 from docwriter.mcp_client import McpClient
 
 from ..deps import current_user_dependency, blob_store_dependency
-from ..models import CompanyProfileRequest, CompanyProfileResponse, CompanyProfileSource, CompanyProfile
+from ..models import (
+    CompanyProfileRequest,
+    CompanyProfileResponse,
+    CompanyProfileSource,
+    CompanyProfile,
+    McpDiscoverRequest,
+    McpDiscoverResponse,
+    McpResourceEntry,
+    McpToolEntry,
+)
 
 router = APIRouter(prefix="/profile", tags=["profile"])
 
@@ -106,7 +115,7 @@ def update_company_profile(
 
 
 if _multipart_available:
-    @router.post("/company/upload", response_model=CompanyProfileResponse, status_code=status.HTTP_202_ACCEPTED)
+@router.post("/company/upload", response_model=CompanyProfileResponse, status_code=status.HTTP_202_ACCEPTED)
     def upload_company_profile(
         file: UploadFile = File(...),
         user_id: str = Depends(current_user_dependency),
@@ -139,3 +148,39 @@ if _multipart_available:
             updated=time.time(),
             mcp_config=mcp_config,
         )
+
+
+@router.post("/mcp/discover", response_model=McpDiscoverResponse)
+def discover_mcp(
+    payload: McpDiscoverRequest,
+    authorization: str = Header(..., alias="Authorization"),
+) -> McpDiscoverResponse:
+    base_url = payload.base_url.strip()
+    if not base_url:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="base_url is required")
+    scheme, _, token = authorization.partition(" ")
+    bearer = token if scheme.lower() == "bearer" and token else None
+    client = McpClient()
+    resources_payload = client.list_resources(base_url, token=bearer) or {}
+    tools_payload = client.list_tools(base_url, token=bearer) or {}
+    resources_raw = resources_payload.get("resources") or []
+    tools_raw = tools_payload.get("tools") or []
+    resources = [
+        McpResourceEntry(
+            name=str(item.get("name") or ""),
+            path=str(item.get("path") or item.get("uri") or ""),
+            description=item.get("description"),
+        )
+        for item in resources_raw
+        if isinstance(item, dict)
+    ]
+    tools = [
+        McpToolEntry(
+            name=str(item.get("name") or ""),
+            path=str(item.get("path") or ""),
+            description=item.get("description"),
+        )
+        for item in tools_raw
+        if isinstance(item, dict)
+    ]
+    return McpDiscoverResponse(resources=resources, tools=tools)
