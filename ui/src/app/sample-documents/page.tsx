@@ -86,21 +86,6 @@ export default function SampleDocumentsPage() {
                   >
                     Preview
                   </button>
-                  <a
-                    href={`/sample-documents/${doc.slug}.pdf`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="rounded-full border border-slate-300 px-3.5 py-1.5 text-[13px] font-semibold text-slate-900 transition hover:border-slate-400 hover:bg-slate-50"
-                  >
-                    View PDF
-                  </a>
-                  <a
-                    href={`/sample-documents/${doc.slug}.pdf`}
-                    download
-                    className="rounded-full bg-slate-900 px-3.5 py-1.5 text-[13px] font-semibold text-white shadow-[0_10px_35px_rgba(15,23,42,0.35)] transition hover:bg-slate-800"
-                  >
-                    Download
-                  </a>
                 </div>
               </div>
             </article>
@@ -125,11 +110,7 @@ export default function SampleDocumentsPage() {
               className="h-[520px] w-full"
             >
               <div className="p-6 text-sm text-white/80">
-                Preview not available in this browser.{" "}
-                <a href={`/sample-documents/${selectedDoc.slug}.pdf`} target="_blank" rel="noreferrer" className="underline">
-                  Open the PDF
-                </a>
-                .
+                Preview not available in this browser.
               </div>
             </object>
           </div>
