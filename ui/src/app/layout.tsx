@@ -55,6 +55,7 @@ const navItems = [
   { href: "/features", label: "Features" },
   { href: "/sample-documents", label: "Sample documents" },
   { href: "/workspace", label: "Workspace", prefetch: false },
+  { href: "/about-author", label: "About the author" },
 ];
 
 export default function RootLayout({
@@ -74,16 +75,33 @@ export default function RootLayout({
                   DocWriter Studio
                 </Link>
                 <nav className="flex flex-wrap items-center gap-4 text-base font-semibold text-slate-600">
-                  {navItems.map((item) => (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      prefetch={item.prefetch ?? true}
-                      className="rounded-full border border-transparent bg-white/50 px-6 py-2.5 text-slate-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition hover:border-slate-300 hover:bg-white hover:text-slate-900"
-                    >
-                      {item.label}
-                    </Link>
-                  ))}
+                  {navItems.map((item) => {
+                    const className =
+                      "rounded-full border border-transparent bg-white/50 px-6 py-2.5 text-slate-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition hover:border-slate-300 hover:bg-white hover:text-slate-900";
+                    if (item.external) {
+                      return (
+                        <a
+                          key={item.href}
+                          href={item.href}
+                          target="_blank"
+                          rel="noreferrer"
+                          className={className}
+                        >
+                          {item.label}
+                        </a>
+                      );
+                    }
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        prefetch={item.prefetch ?? true}
+                        className={className}
+                      >
+                        {item.label}
+                      </Link>
+                    );
+                  })}
                 </nav>
                 <AuthControls />
               </header>
