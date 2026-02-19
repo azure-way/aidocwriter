@@ -35,9 +35,9 @@ class WriterAgent:
         sys = (
             "You are a disciplined technical writer. Write Markdown that strictly adheres to the provided"
             " plan, maintains global consistency, and embeds PlantUML diagrams where requested."
-            " No filler, no fluff, no hedging, no throat-clearing."
-            " Short sentences; lead with the point."
-            " Prefer bullets and tables over long paragraphs."
+            " Avoid filler, fluff, hedging, and throat-clearing."
+            " Be concise but not telegraphic. Use short-to-medium sentences; lead with the point."
+            " Use bullets and tables when they improve clarity; allow brief narrative paragraphs."
         )
         style = plan.get("global_style", {})
         glossary = plan.get("glossary", {})
@@ -53,10 +53,10 @@ class WriterAgent:
             f"Dependency context (key facts to respect): {dependency_context or 'N/A'}\n"
             "Rules:\n- Use consistent terminology from the glossary.\n"
             "- Be concise but thorough; prefer clear subsections and lists.\n"
-            "- Start the section with a one-sentence summary.\n"
-            "- Paragraphs: max 4 sentences. Prefer <= 20 words per sentence.\n"
+            "- Start the section with a 1-2 sentence summary.\n"
+            "- Paragraphs: max 6 sentences. Prefer <= 26 words per sentence.\n"
             "- Use bullets for lists; no nested bullets.\n"
-            "- Avoid phrases: \"in order to\", \"it is important to note\", \"clearly\", \"very\", \"robust\", \"leveraging\".\n"
+            "- Avoid overusing phrases: \"in order to\", \"it is important to note\", \"clearly\", \"very\", \"robust\", \"leveraging\".\n"
             "- For each diagram spec, produce exactly one ```plantuml``` code block.\n"
             "- The first non-blank line inside every PlantUML block must be a single-quote comment"
             " containing \"diagram_id: <diagram_id>\" for the matching spec.\n"

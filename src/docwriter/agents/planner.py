@@ -41,8 +41,8 @@ class PlannerAgent:
         sys = (
             "You are a meticulous planning agent. Produce a JSON plan for a long, consistent,"
             " markdown document with sections, objectives, constraints, glossary, and PlantUML diagram specs."
-            " Keep it compact but complete. No filler, no hedging, no marketing language."
-            " Use short, concrete phrasing. Prefer nouns and verbs over adjectives."
+            " Keep it compact but complete. Avoid filler, hedging, and marketing language."
+            " Be concise but not terse. Use clear, concrete phrasing."
         )
         user = f"Title: {title}\nAudience: {audience}\nTarget length pages: {length_pages}"
 
@@ -50,20 +50,21 @@ class PlannerAgent:
             "Respond ONLY with JSON having keys: title, audience, length_pages, outline, glossary,"
             " global_style, diagram_specs.\n"
             "- outline: list of sections {id, title, goals, key_points, dependencies}\n"
-            "- Outline length: 8-15 sections total.\n"
-            "- goals per section: 2-4 items. Each goal is 1 sentence, <= 25 words.\n"
-            "- key_points per section: 3-5 items. Each key point is 1 sentence, <= 18 words.\n"
-            "- dependencies per section: 0-3 items.\n"
+            "- Outline length: 10-16 sections total.\n"
+            "- goals per section: 2-5 items. Each goal is 1 sentence, <= 24 words.\n"
+            "- key_points per section: 4-7 items. Each key point is 1 sentence, <= 24 words.\n"
+            "- dependencies per section: 0-4 items.\n"
             "- Do not repeat ideas across sections.\n"
             "- glossary: {term: definition}\n"
             "- glossary: max 40 terms.\n"
             "- global_style: {tone, pov, formatting_rules}\n"
             "- diagram_specs: list of {diagram_id, section_id, title, diagram_type, plantuml_prompt,"
             " description, entities, relationships, alt_text, format}\n"
+            "- diagram_specs: 0-10 items total, only if a diagram adds clarity.\n"
             "- diagram_id must be unique across the plan and safe for use in filenames (lowercase, hyphen or underscore)\n"
             "- plantuml_prompt should explain what the PlantUML diagram must depict.\n"
             "- alt_text should be a short caption for the rendered image.\n"
-            "- Avoid vague verbs (e.g., leverage, utilize, ensure) unless strictly necessary.\n"
+            "- Avoid vague verbs (e.g., leverage, utilize, ensure) unless necessary.\n"
         )
 
         response_format = {
