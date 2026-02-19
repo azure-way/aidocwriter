@@ -50,7 +50,14 @@ export const metadata: Metadata = {
   },
 };
 
-const navItems = [
+type NavItem = {
+  href: string;
+  label: string;
+  prefetch?: boolean;
+  external?: boolean;
+};
+
+const navItems: NavItem[] = [
   { href: "/", label: "Home" },
   { href: "/features", label: "Features" },
   { href: "/sample-documents", label: "Sample documents" },
