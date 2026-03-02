@@ -39,8 +39,8 @@ resource "azurerm_container_app" "api" {
     container {
       name   = each.key
       image  = each.value.image
-      cpu    = 0.5
-      memory = "1Gi"
+      cpu    = 0.25
+      memory = "0.5Gi"
 
       env {
         name  = "PLANTUML_SERVER_URL"
@@ -119,8 +119,8 @@ resource "azurerm_container_app" "ui" {
     container {
       name   = each.key
       image  = each.value.image
-      cpu    = 0.5
-      memory = "1Gi"
+      cpu    = 0.25
+      memory = "0.5Gi"
 
       
 
@@ -206,8 +206,8 @@ resource "azurerm_container_app" "functions" {
     container {
       name   = "functions"
       image  = each.value
-      cpu    = 0.5
-      memory = "1Gi"
+      cpu    = 0.25
+      memory = "0.5Gi"
 
       env {
         name  = "WEBSITE_RUN_FROM_PACKAGE"
