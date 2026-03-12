@@ -1,0 +1,11 @@
+FROM python:3.10-slim
+
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /workspace
+COPY pyproject.toml README.md /workspace/
+COPY src/docwriter /workspace/src/docwriter
+
+RUN pip install --no-cache-dir /workspace
+
+CMD ["python", "-m", "docwriter.job_runner"]

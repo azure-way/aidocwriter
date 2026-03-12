@@ -122,7 +122,7 @@ resource "azurerm_container_app" "ui" {
       cpu    = 0.25
       memory = "0.5Gi"
 
-      
+
 
 
       dynamic "env" {
@@ -172,16 +172,17 @@ resource "azurerm_container_app" "ui" {
 }
 
 
-resource "azurerm_container_app" "functions" {
-  for_each = var.functions_images
+resource "azurerm_container_app_job" "workers" {
+  for_each = var.worker_jobs
 
-  name                         = each.key
+  name                         = "${var.name_prefix}-${each.key}"
+  location                     = var.location
   resource_group_name          = var.resource_group_name
   container_app_environment_id = azurerm_container_app_environment.main.id
-  revision_mode                = "Single"
+  workload_profile_name        = "Consumption"
+  replica_timeout_in_seconds   = try(each.value.replica_timeout_seconds, 1800)
+  replica_retry_limit          = try(each.value.replica_retry_limit, 3)
   tags                         = var.tags
-
-  workload_profile_name = "Consumption"
 
   identity {
     type         = "SystemAssigned, UserAssigned"
@@ -202,25 +203,69 @@ resource "azurerm_container_app" "functions" {
     }
   }
 
+  event_trigger_config {
+    parallelism              = try(each.value.parallelism, 1)
+    replica_completion_count = try(each.value.replica_completion_count, 1)
+
+    scale {
+      min_executions              = try(each.value.min_executions, 0)
+      max_executions              = try(each.value.max_executions, 10)
+      polling_interval_in_seconds = try(each.value.polling_interval_seconds, 30)
+
+      rules {
+        name             = "service-bus"
+        custom_rule_type = each.value.custom_rule_type
+        metadata         = each.value.scale_metadata
+      }
+    }
+  }
+
   template {
     container {
-      name   = "functions"
-      image  = each.value
+      name   = "worker"
+      image  = var.worker_job_image
       cpu    = 0.25
       memory = "0.5Gi"
 
-      env {
-        name  = "WEBSITE_RUN_FROM_PACKAGE"
-        value = "0"
-      }
+      command = ["python", "-m", "docwriter.job_runner"]
 
       env {
         name  = "PLANTUML_SERVER_URL"
         value = "https://${var.plantuml_server_name}.${azurerm_container_app_environment.main.default_domain}"
       }
 
+      env {
+        name  = "DOCWRITER_WORKER_STAGE"
+        value = each.value.stage
+      }
+
+      env {
+        name  = "DOCWRITER_WORKER_KIND"
+        value = each.value.kind
+      }
+
+      env {
+        name  = "DOCWRITER_WORKER_QUEUE"
+        value = try(each.value.queue, "")
+      }
+
+      env {
+        name  = "DOCWRITER_WORKER_TOPIC"
+        value = try(each.value.topic, "")
+      }
+
+      env {
+        name  = "DOCWRITER_WORKER_SUBSCRIPTION"
+        value = try(each.value.subscription, "")
+      }
+
+      env {
+        name  = "DOCWRITER_MAX_MESSAGES_PER_EXECUTION"
+        value = "1"
+      }
+
       dynamic "env" {
-        for_each = var.functions_env
+        for_each = var.worker_env
         content {
           name  = env.key
           value = env.value

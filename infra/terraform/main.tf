@@ -50,14 +50,6 @@ resource "azurerm_role_assignment" "principal_rbac" {
   principal_id         = data.azurerm_client_config.current.object_id
 }
 
-resource "azurerm_role_assignment" "service_bus_secret_reader" {
-  scope                = module.service_bus.connection_string_secret_id
-  role_definition_name = "Key Vault Secrets User"
-  principal_id         = azurerm_user_assigned_identity.ca_identity.principal_id
-
-  depends_on = [module.service_bus]
-}
-
 resource "azurerm_role_assignment" "storage_secret_reader" {
   scope                = module.storage.connection_string_secret_id
   role_definition_name = "Key Vault Secrets User"
@@ -159,15 +151,28 @@ module "service_bus" {
   depends_on = [azurerm_role_assignment.principal_rbac]
 }
 
+resource "azurerm_role_assignment" "service_bus_data_receiver" {
+  scope                = module.service_bus.namespace_id
+  role_definition_name = "Azure Service Bus Data Receiver"
+  principal_id         = azurerm_user_assigned_identity.ca_identity.principal_id
+}
+
+resource "azurerm_role_assignment" "service_bus_data_sender" {
+  scope                = module.service_bus.namespace_id
+  role_definition_name = "Azure Service Bus Data Sender"
+  principal_id         = azurerm_user_assigned_identity.ca_identity.principal_id
+}
+
 resource "time_sleep" "wait_60_seconds" {
   create_duration = "60s"
 
   depends_on = [
-    azurerm_role_assignment.service_bus_secret_reader,
     azurerm_role_assignment.storage_secret_reader,
     azurerm_role_assignment.open_ai_key_secret_reader,
     azurerm_role_assignment.app_insights_secret_reader,
-    azurerm_role_assignment.app_insights_connection_string_reader
+    azurerm_role_assignment.app_insights_connection_string_reader,
+    azurerm_role_assignment.service_bus_data_receiver,
+    azurerm_role_assignment.service_bus_data_sender
   ]
 }
 
@@ -213,42 +218,6 @@ module "app" {
   }
 
   api_env = {
-    OPENAI_BASE_URL                  = var.openai_base_url
-    OPENAI_API_VERSION               = var.openai_api_version
-    SERVICE_BUS_QUEUE_PLAN_INTAKE    = "docwriter-plan-intake"
-    SERVICE_BUS_QUEUE_INTAKE_RESUME  = "docwriter-intake-resume"
-    SERVICE_BUS_QUEUE_PLAN           = "docwriter-plan"
-    SERVICE_BUS_QUEUE_WRITE          = "docwriter-write"
-    SERVICE_BUS_QUEUE_REVIEW         = "docwriter-review"
-    SERVICE_BUS_QUEUE_REVIEW_GENERAL = "docwriter-review"
-    SERVICE_BUS_QUEUE_REVIEW_STYLE   = "docwriter-review-style"
-    SERVICE_BUS_QUEUE_REVIEW_COHESION = "docwriter-review-cohesion"
-    SERVICE_BUS_QUEUE_REVIEW_SUMMARY = "docwriter-review-summary"
-    SERVICE_BUS_QUEUE_VERIFY         = "docwriter-verify"
-    SERVICE_BUS_QUEUE_REWRITE        = "docwriter-rewrite"
-    SERVICE_BUS_QUEUE_DIAGRAM_PREP   = "docwriter-diagram-prep"
-    SERVICE_BUS_QUEUE_DIAGRAM_RENDER = "docwriter-diagram-render"
-    SERVICE_BUS_QUEUE_FINALIZE_READY = "docwriter-finalize-ready"
-    SERVICE_BUS_TOPIC_STATUS         = module.service_bus.topic_name
-    SERVICE_BUS_STATUS_SUBSCRIPTION  = "status-writer"
-    AZURE_BLOB_CONTAINER             = "docwriter"
-    AUTH0_ISSUER_BASE_URL            = var.auth0_issuer_base_url
-    AUTH0_AUDIENCE                   = var.auth0_audience
-  }
-  functions_images = {
-    plan-intake    = "${module.container_registry.url}/docwriter-plan-intake:${var.docker_image_version}"
-    intake-resume  = "${module.container_registry.url}/docwriter-intake-resume:${var.docker_image_version}"
-    plan           = "${module.container_registry.url}/docwriter-plan:${var.docker_image_version}"
-    write          = "${module.container_registry.url}/docwriter-write:${var.docker_image_version}"
-    review         = "${module.container_registry.url}/docwriter-review:${var.docker_image_version}"
-    verify         = "${module.container_registry.url}/docwriter-verify:${var.docker_image_version}"
-    rewrite        = "${module.container_registry.url}/docwriter-rewrite:${var.docker_image_version}"
-    finalize       = "${module.container_registry.url}/docwriter-finalize:${var.docker_image_version}"
-    status         = "${module.container_registry.url}/docwriter-status:${var.docker_image_version}"
-    diagram-render = "${module.container_registry.url}/docwriter-diagram-render:${var.docker_image_version}"
-    diagram-prep   = "${module.container_registry.url}/docwriter-diagram-prep:${var.docker_image_version}"
-  }
-  functions_env = {
     OPENAI_BASE_URL                   = var.openai_base_url
     OPENAI_API_VERSION                = var.openai_api_version
     SERVICE_BUS_QUEUE_PLAN_INTAKE     = "docwriter-plan-intake"
@@ -267,6 +236,190 @@ module "app" {
     SERVICE_BUS_QUEUE_FINALIZE_READY  = "docwriter-finalize-ready"
     SERVICE_BUS_TOPIC_STATUS          = module.service_bus.topic_name
     SERVICE_BUS_STATUS_SUBSCRIPTION   = "status-writer"
+    SERVICE_BUS_NAMESPACE             = module.service_bus.namespace_name
+    AZURE_BLOB_CONTAINER              = "docwriter"
+    AUTH0_ISSUER_BASE_URL             = var.auth0_issuer_base_url
+    AUTH0_AUDIENCE                    = var.auth0_audience
+  }
+  worker_job_image = "${module.container_registry.url}/docwriter-worker-job:${var.docker_image_version}"
+  worker_jobs = {
+    plan-intake = {
+      stage            = "plan-intake"
+      kind             = "queue"
+      queue            = "docwriter-plan-intake"
+      custom_rule_type = "azure-servicebus"
+      scale_metadata = {
+        namespace    = module.service_bus.namespace_name
+        queueName    = "docwriter-plan-intake"
+        messageCount = "1"
+      }
+    }
+    intake-resume = {
+      stage            = "intake-resume"
+      kind             = "queue"
+      queue            = "docwriter-intake-resume"
+      custom_rule_type = "azure-servicebus"
+      scale_metadata = {
+        namespace    = module.service_bus.namespace_name
+        queueName    = "docwriter-intake-resume"
+        messageCount = "1"
+      }
+    }
+    plan = {
+      stage            = "plan"
+      kind             = "queue"
+      queue            = "docwriter-plan"
+      custom_rule_type = "azure-servicebus"
+      scale_metadata = {
+        namespace    = module.service_bus.namespace_name
+        queueName    = "docwriter-plan"
+        messageCount = "1"
+      }
+    }
+    write = {
+      stage            = "write"
+      kind             = "queue"
+      queue            = "docwriter-write"
+      custom_rule_type = "azure-servicebus"
+      scale_metadata = {
+        namespace    = module.service_bus.namespace_name
+        queueName    = "docwriter-write"
+        messageCount = "1"
+      }
+    }
+    review-general = {
+      stage            = "review-general"
+      kind             = "queue"
+      queue            = "docwriter-review"
+      custom_rule_type = "azure-servicebus"
+      scale_metadata = {
+        namespace    = module.service_bus.namespace_name
+        queueName    = "docwriter-review"
+        messageCount = "1"
+      }
+    }
+    review-style = {
+      stage            = "review-style"
+      kind             = "queue"
+      queue            = "docwriter-review-style"
+      custom_rule_type = "azure-servicebus"
+      scale_metadata = {
+        namespace    = module.service_bus.namespace_name
+        queueName    = "docwriter-review-style"
+        messageCount = "1"
+      }
+    }
+    review-cohesion = {
+      stage            = "review-cohesion"
+      kind             = "queue"
+      queue            = "docwriter-review-cohesion"
+      custom_rule_type = "azure-servicebus"
+      scale_metadata = {
+        namespace    = module.service_bus.namespace_name
+        queueName    = "docwriter-review-cohesion"
+        messageCount = "1"
+      }
+    }
+    review-summary = {
+      stage            = "review-summary"
+      kind             = "queue"
+      queue            = "docwriter-review-summary"
+      custom_rule_type = "azure-servicebus"
+      scale_metadata = {
+        namespace    = module.service_bus.namespace_name
+        queueName    = "docwriter-review-summary"
+        messageCount = "1"
+      }
+    }
+    verify = {
+      stage            = "verify"
+      kind             = "queue"
+      queue            = "docwriter-verify"
+      custom_rule_type = "azure-servicebus"
+      scale_metadata = {
+        namespace    = module.service_bus.namespace_name
+        queueName    = "docwriter-verify"
+        messageCount = "1"
+      }
+    }
+    rewrite = {
+      stage            = "rewrite"
+      kind             = "queue"
+      queue            = "docwriter-rewrite"
+      custom_rule_type = "azure-servicebus"
+      scale_metadata = {
+        namespace    = module.service_bus.namespace_name
+        queueName    = "docwriter-rewrite"
+        messageCount = "1"
+      }
+    }
+    diagram-prep = {
+      stage            = "diagram-prep"
+      kind             = "queue"
+      queue            = "docwriter-diagram-prep"
+      custom_rule_type = "azure-servicebus"
+      scale_metadata = {
+        namespace    = module.service_bus.namespace_name
+        queueName    = "docwriter-diagram-prep"
+        messageCount = "1"
+      }
+    }
+    diagram-render = {
+      stage            = "diagram-render"
+      kind             = "queue"
+      queue            = "docwriter-diagram-render"
+      custom_rule_type = "azure-servicebus"
+      scale_metadata = {
+        namespace    = module.service_bus.namespace_name
+        queueName    = "docwriter-diagram-render"
+        messageCount = "1"
+      }
+    }
+    finalize = {
+      stage            = "finalize"
+      kind             = "queue"
+      queue            = "docwriter-finalize-ready"
+      custom_rule_type = "azure-servicebus"
+      scale_metadata = {
+        namespace    = module.service_bus.namespace_name
+        queueName    = "docwriter-finalize-ready"
+        messageCount = "1"
+      }
+    }
+    status-writer = {
+      stage            = "status-writer"
+      kind             = "topic"
+      topic            = module.service_bus.topic_name
+      subscription     = "status-writer"
+      custom_rule_type = "azure-servicebus"
+      scale_metadata = {
+        namespace        = module.service_bus.namespace_name
+        topicName        = module.service_bus.topic_name
+        subscriptionName = "status-writer"
+        messageCount     = "1"
+      }
+    }
+  }
+  worker_env = {
+    OPENAI_BASE_URL                   = var.openai_base_url
+    OPENAI_API_VERSION                = var.openai_api_version
+    SERVICE_BUS_QUEUE_PLAN_INTAKE     = "docwriter-plan-intake"
+    SERVICE_BUS_QUEUE_INTAKE_RESUME   = "docwriter-intake-resume"
+    SERVICE_BUS_QUEUE_PLAN            = "docwriter-plan"
+    SERVICE_BUS_QUEUE_WRITE           = "docwriter-write"
+    SERVICE_BUS_QUEUE_REVIEW          = "docwriter-review"
+    SERVICE_BUS_QUEUE_REVIEW_GENERAL  = "docwriter-review"
+    SERVICE_BUS_QUEUE_REVIEW_STYLE    = "docwriter-review-style"
+    SERVICE_BUS_QUEUE_REVIEW_COHESION = "docwriter-review-cohesion"
+    SERVICE_BUS_QUEUE_REVIEW_SUMMARY  = "docwriter-review-summary"
+    SERVICE_BUS_QUEUE_VERIFY          = "docwriter-verify"
+    SERVICE_BUS_QUEUE_REWRITE         = "docwriter-rewrite"
+    SERVICE_BUS_QUEUE_DIAGRAM_PREP    = "docwriter-diagram-prep"
+    SERVICE_BUS_QUEUE_DIAGRAM_RENDER  = "docwriter-diagram-render"
+    SERVICE_BUS_QUEUE_FINALIZE_READY  = "docwriter-finalize-ready"
+    SERVICE_BUS_TOPIC_STATUS          = module.service_bus.topic_name
+    SERVICE_BUS_STATUS_SUBSCRIPTION   = "status-writer"
+    SERVICE_BUS_NAMESPACE             = module.service_bus.namespace_name
     AZURE_BLOB_CONTAINER              = "docwriter"
     DOCWRITER_STATUS_TABLE            = "DocWriterStatus"
     DOCWRITER_PLANTUML_REFORMAT_MODEL = "gpt-5.1-codex"
@@ -281,12 +434,6 @@ module "app" {
       name                = "azure-openai-api-key"
       env_name            = "OPENAI_API_KEY"
       key_vault_secret_id = azurerm_key_vault_secret.open_ai_key.versionless_id
-      identity            = azurerm_user_assigned_identity.ca_identity.id
-    },
-    {
-      name                = "servicebus-connection-string"
-      env_name            = "SERVICE_BUS_CONNECTION_STRING"
-      key_vault_secret_id = module.service_bus.connection_string_kv_id
       identity            = azurerm_user_assigned_identity.ca_identity.id
     },
     {
@@ -310,18 +457,18 @@ module "app" {
   ]
 
   ui_env = {
-    NEXT_PUBLIC_API_BASE_URL       = "https://aidocwriter-api.gentlecliff-6769fc4f.westeurope.azurecontainerapps.io"
-    AUTH0_BASE_URL                 = "https://docwriter-studio.azureway.cloud"
-    APP_BASE_URL                   = "https://docwriter-studio.azureway.cloud"
-    AUTH0_ISSUER_BASE_URL          = "https://pixelteam.eu.auth0.com"
-    AUTH0_DOMAIN                   = "https://pixelteam.eu.auth0.com"
-    AUTH0_CLIENT_ID                = "IVMRXTH6H6fJa3022IygQI9DLXVpJkYB"
-    AUTH0_AUDIENCE                 = "https://docwriter-api.azureway.cloud"
-    AUTH0_SCOPE                    = "openid profile email api offline_access"
-    NEXT_PUBLIC_AUTH0_AUDIENCE     = "https://docwriter-api.azureway.cloud"
-    NEXT_PUBLIC_AUTH0_SCOPE        = "openid profile email api offline_access"
-    NEXT_PUBLIC_PROFILE_ROUTE      = "/auth/profile"
-    NEXT_PUBLIC_ACCESS_TOKEN_ROUTE = "/api/auth/access-token"
+    NEXT_PUBLIC_API_BASE_URL            = "https://aidocwriter-api.gentlecliff-6769fc4f.westeurope.azurecontainerapps.io"
+    AUTH0_BASE_URL                      = "https://docwriter-studio.azureway.cloud"
+    APP_BASE_URL                        = "https://docwriter-studio.azureway.cloud"
+    AUTH0_ISSUER_BASE_URL               = "https://pixelteam.eu.auth0.com"
+    AUTH0_DOMAIN                        = "https://pixelteam.eu.auth0.com"
+    AUTH0_CLIENT_ID                     = "IVMRXTH6H6fJa3022IygQI9DLXVpJkYB"
+    AUTH0_AUDIENCE                      = "https://docwriter-api.azureway.cloud"
+    AUTH0_SCOPE                         = "openid profile email api offline_access"
+    NEXT_PUBLIC_AUTH0_AUDIENCE          = "https://docwriter-api.azureway.cloud"
+    NEXT_PUBLIC_AUTH0_SCOPE             = "openid profile email api offline_access"
+    NEXT_PUBLIC_PROFILE_ROUTE           = "/auth/profile"
+    NEXT_PUBLIC_ACCESS_TOKEN_ROUTE      = "/api/auth/access-token"
     NEXT_PUBLIC_REVIEW_STYLE_ENABLED    = "false"
     NEXT_PUBLIC_REVIEW_COHESION_ENABLED = "false"
     NEXT_PUBLIC_REVIEW_SUMMARY_ENABLED  = "false"

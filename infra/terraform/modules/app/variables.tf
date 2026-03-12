@@ -26,8 +26,28 @@ variable "api_images" {
   }))
 }
 
-variable "functions_images" {
-  type = map(string)
+variable "worker_job_image" {
+  type = string
+}
+
+variable "worker_jobs" {
+  type = map(object({
+    stage                    = string
+    kind                     = string
+    queue                    = optional(string)
+    topic                    = optional(string)
+    subscription             = optional(string)
+    custom_rule_type         = string
+    scale_metadata           = map(string)
+    polling_interval_seconds = optional(number, 30)
+    min_executions           = optional(number, 0)
+    max_executions           = optional(number, 10)
+    parallelism              = optional(number, 1)
+    replica_completion_count = optional(number, 1)
+    replica_retry_limit      = optional(number, 3)
+    replica_timeout_seconds  = optional(number, 1800)
+  }))
+  default = {}
 }
 
 variable "api_env" {
@@ -48,7 +68,7 @@ variable "ui_images" {
     min_replicas = optional(number, 1)
     max_replicas = optional(number, 1)
   }))
-  default     = {}
+  default = {}
 }
 
 variable "ui_ports" {
@@ -73,7 +93,7 @@ variable "ui_secrets" {
   default = []
 }
 
-variable "functions_env" {
+variable "worker_env" {
   type    = map(string)
   default = {}
 }

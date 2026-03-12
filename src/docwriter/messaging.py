@@ -12,6 +12,11 @@ except Exception:  # pragma: no cover
     ServiceBusClient = None  # type: ignore
     ServiceBusMessage = None  # type: ignore
 
+try:
+    from azure.identity import DefaultAzureCredential  # type: ignore
+except Exception:  # pragma: no cover
+    DefaultAzureCredential = None  # type: ignore
+
 from .config import get_settings
 from .models import StatusEvent
 from .telemetry import track_event, track_exception
@@ -22,6 +27,8 @@ class ServiceBusManager:
 
     _client: ServiceBusClient | None = None  # type: ignore[assignment]
     _connection: str | None = None
+    _fq_namespace: str | None = None
+    _credential: Any = None
 
     def __init__(self) -> None:
         self._status_defaults: Set[str] = {
@@ -31,13 +38,32 @@ class ServiceBusManager:
 
     def ensure_ready(self) -> None:
         settings = get_settings()
-        if not settings.sb_connection_string:
-            raise RuntimeError("SERVICE_BUS_CONNECTION_STRING not set")
         if ServiceBusClient is None or ServiceBusMessage is None:  # pragma: no cover
             raise RuntimeError("azure-servicebus not installed")
-        if self._client is None or self._connection != settings.sb_connection_string:
-            self._client = ServiceBusClient.from_connection_string(settings.sb_connection_string)
-            self._connection = settings.sb_connection_string
+        conn = settings.sb_connection_string
+        fq_namespace = self._resolve_fully_qualified_namespace()
+        if conn:
+            if self._client is None or self._connection != conn:
+                self._client = ServiceBusClient.from_connection_string(conn)
+                self._connection = conn
+                self._fq_namespace = None
+                self._credential = None
+            return
+        if not fq_namespace:
+            raise RuntimeError(
+                "Service Bus auth requires SERVICE_BUS_CONNECTION_STRING or SERVICE_BUS_NAMESPACE/SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE"
+            )
+        if DefaultAzureCredential is None:  # pragma: no cover
+            raise RuntimeError("azure-identity not installed")
+        if self._client is None or self._fq_namespace != fq_namespace:
+            credential = DefaultAzureCredential()
+            self._client = ServiceBusClient(
+                fully_qualified_namespace=fq_namespace,
+                credential=credential,
+            )
+            self._connection = None
+            self._fq_namespace = fq_namespace
+            self._credential = credential
 
     def get_client(self) -> ServiceBusClient:
         self.ensure_ready()
@@ -47,7 +73,6 @@ class ServiceBusManager:
     # Queue interactions -------------------------------------------------
     def send_queue(self, queue_name: str, payload: Dict[str, Any]) -> None:
         self.ensure_ready()
-        settings = get_settings()
         client = self.get_client()
         try:
             with client.get_queue_sender(queue_name) as sender:
@@ -96,6 +121,18 @@ class ServiceBusManager:
         if "job_id" in payload:
             props["job_id"] = str(payload["job_id"])
         track_event("job_status", props)
+
+    def _resolve_fully_qualified_namespace(self) -> str | None:
+        settings = get_settings()
+        fq_namespace = settings.sb_fully_qualified_namespace
+        if fq_namespace:
+            return fq_namespace
+        namespace = settings.sb_namespace
+        if not namespace:
+            return None
+        if namespace.endswith(".servicebus.windows.net"):
+            return namespace
+        return f"{namespace}.servicebus.windows.net"
 
     def publish_stage_event(
         self,

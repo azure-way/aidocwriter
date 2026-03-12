@@ -17,28 +17,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - dockerfile: src/functions_plan_intake/Dockerfile
-            image_name: docwriter-plan-intake
-          - dockerfile: src/functions_intake_resume/Dockerfile
-            image_name: docwriter-intake-resume
-          - dockerfile: src/functions_plan/Dockerfile
-            image_name: docwriter-plan
-          - dockerfile: src/functions_write/Dockerfile
-            image_name: docwriter-write
-          - dockerfile: src/functions_review/Dockerfile
-            image_name: docwriter-review
-          - dockerfile: src/functions_verify/Dockerfile
-            image_name: docwriter-verify
-          - dockerfile: src/functions_rewrite/Dockerfile
-            image_name: docwriter-rewrite
-          - dockerfile: src/functions_finalize/Dockerfile
-            image_name: docwriter-finalize
-          - dockerfile: src/functions_status/Dockerfile
-            image_name: docwriter-status
-          - dockerfile: src/functions_diagram_render/Dockerfile
-            image_name: docwriter-diagram-render
-          - dockerfile: src/functions_diagram_prep/Dockerfile
-            image_name: docwriter-diagram-prep
+          - dockerfile: Dockerfile.worker
+            image_name: docwriter-worker-job
           - dockerfile: plantuml-server/Dockerfile
             image_name: plantuml-server
 

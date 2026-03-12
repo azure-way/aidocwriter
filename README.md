@@ -22,12 +22,12 @@
 - Agentic pipeline: Planner (o3), Writer (gpt-5.2), Reviewer set (o3: general + style + cohesion + executive summary).
 - Queue-driven architecture on Azure Service Bus; artifacts stored in Azure Blob Storage.
 - Dedicated diagram-prep/render stages ensure graphics exist before finalize/PDF/DOCX export and surface progress in the timeline UI.
-- REST-first workflow: jobs are created and monitored via FastAPI; Azure Functions host each worker stage.
+- REST-first workflow: jobs are created and monitored via FastAPI; Azure Container Apps Jobs host each worker stage.
 - Interactive intake: collects detailed requirements before planning for higher quality output.
 
 ## Quick Start
 1) Prerequisites
-   - Python 3.10+, Node.js 18+, Azure CLI, Azure Functions Core Tools.
+   - Python 3.10+, Node.js 18+, Azure CLI.
    - OpenAI/Azure OpenAI models: planner/reviewer/writer default to `gpt-5.2`/`gpt-4.1`; PlantUML reformat model defaults to `gpt-5`.
    - WeasyPrint native deps (Cairo, Pango) for PDF export: https://weasyprint.readthedocs.io/en/stable/install/.
 2) Install dependencies
@@ -41,7 +41,7 @@
    export OPENAI_API_KEY=...
    export OPENAI_BASE_URL=...
    export OPENAI_API_VERSION=...
-   export SERVICE_BUS_CONNECTION_STRING=...
+   export SERVICE_BUS_NAMESPACE=<service-bus-namespace-name>
    export SERVICE_BUS_QUEUE_PLAN_INTAKE=docwriter-plan-intake
    export SERVICE_BUS_QUEUE_INTAKE_RESUME=docwriter-intake-resume
    export SERVICE_BUS_QUEUE_PLAN=docwriter-plan
@@ -68,21 +68,16 @@
    export APPINSIGHTS_INSTRUMENTATION_KEY=...       # optional
    export NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
    ```
-4) Run locally (API + Functions + UI)
+4) Run locally (API + worker job runner + UI)
    ```bash
    # API
    uvicorn api.main:app --reload
 
-   # Functions (per stage, in parallel tabs)
-   cd src/functions_plan_intake && func start
-   cd ../functions_plan && func start
-   cd ../functions_write && func start
-   cd ../functions_review && func start
-   cd ../functions_verify && func start
-   cd ../functions_rewrite && func start
-   cd ../functions_diagram_prep && func start
-   cd ../functions_diagram_render && func start
-   cd ../functions_finalize && func start
+   # Worker job runner (one message per execution)
+   DOCWRITER_WORKER_KIND=queue \
+   DOCWRITER_WORKER_STAGE=plan \
+   DOCWRITER_WORKER_QUEUE=docwriter-plan \
+   python -m docwriter.job_runner
 
    # UI
    npm run dev --prefix ui
@@ -192,13 +187,13 @@ flowchart LR
 ```
 
 ## Azure Hosting Plan (in progress)
-- **Azure Functions per stage:** Each queue processor (plan-intake, intake-resume, plan, write, review, verify, rewrite, finalize) will run as an independent Python Azure Function with a Service Bus trigger, reusing the existing `process_*` handlers.
-- **Container Apps deployment:** Functions and the new REST API will be packaged as container images and hosted on Azure Container Apps for horizontal scaling and simplified ops.
+- **Container Apps Jobs per stage:** Each queue/topic processor runs as an event-driven Azure Container Apps Job (KEDA scale rule), reusing existing `process_*` handlers.
+- **Container Apps deployment:** Worker jobs and the REST API are packaged as container images and hosted on Azure Container Apps for horizontal scaling and simplified ops.
 - **Public API:** A lightweight FastAPI service will mirror core CLI commands (enqueue job, resume intake, status polling) so future web clients can integrate without shell access. CLI remains fully supported.
 - **Terraform IaC:** Infrastructure modules (`infra/terraform`) will provision Service Bus resources, Blob Storage, Container Apps, monitoring, and identity wiring. Sample Dockerfiles and deployment scripts will live in `infra/docker` and `scripts/`.
 - `infra/terraform` now contains initial modules for the resource group, Service Bus namespace, storage account, monitoring, and Container Apps environment. Provide container image references via `terraform.tfvars` before running `terraform init && terraform apply`.
 - `.github/workflows/docker-build.yml` builds/pushes all container images to an Azure Container Registry using OpenID Connect. Configure repository secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `ACR_NAME`, and `ACR_LOGIN_SERVER` before enabling the workflow.
-- **Shared configuration:** All runtimes (CLI, Functions, API) read configuration exclusively from environment variables.
+- **Shared configuration:** All runtimes (CLI, worker jobs, API) read configuration exclusively from environment variables.
 
 ### FastAPI / REST usage (early preview)
 - Detailed in the Quick Start section. Timeline and artifact endpoints give full stage visibility without Blob access.
@@ -207,14 +202,13 @@ _Target directory highlights_
 ```
 src/
   docwriter/              # shared core logic (existing)
-  functions_*             # Azure Function apps per stage (plan_intake, plan, write, ...)
-  functions_shared/       # shared Azure Function utilities
+  docwriter/job_runner.py # ACA Job entrypoint for queue/topic workers
   api/                    # REST interface built on the same orchestrators
 infra/
   terraform/              # Service Bus, Storage, Container Apps, monitoring
   docker/                 # container definitions for functions/API
 config/
-  functions.settings.json # local Functions config example
+  functions.settings.json # legacy local Functions config example
 ```
 Documentation and deployment scripts will be updated as those components land.
 
@@ -269,7 +263,7 @@ Scalability
 - Azure Service Bus decouples producers and workers for horizontal scale; Status topic enables dashboards.
 
 -Configuration
-- Configuration is driven by environment variables (see Quick Start). No CLI commands remain; everything runs through FastAPI and Functions.
+- Configuration is driven by environment variables (see Quick Start). No CLI commands remain; everything runs through FastAPI and worker jobs.
 - Models: Planner/Reviewers default to `o3`, Writer defaults to `gpt-4.1`. Token usage is reported using real API metrics when available.
 - Frontend UI lives under `ui/` (Next.js + Tailwind). Set `NEXT_PUBLIC_API_BASE_URL` to your API endpoint and run `npm run dev --prefix ui` for the glass-styled intake experience.
 
@@ -288,9 +282,9 @@ Use these steps to reconstruct the environment in a fresh session:
    - Build or rely on the GitHub Actions workflow (`docker-build.yml`). Images push to `aidocwriteracr.azurecr.io` with tags `:latest` and `:v<git describe>`.
    - Local build example from repo root:
      ```bash
-     docker build --platform linux/amd64 -t aidocwriteracr.azurecr.io/docwriter-plan-intake:v1 -f src/functions_plan_intake/Dockerfile .
-     docker push aidocwriteracr.azurecr.io/docwriter-plan-intake:v1
-     # repeat for other functions + API (Dockerfile.api)
+     docker build --platform linux/amd64 -t aidocwriteracr.azurecr.io/docwriter-worker-job:v1 -f Dockerfile.worker .
+     docker push aidocwriteracr.azurecr.io/docwriter-worker-job:v1
+     # repeat for API/UI/plantuml images
      ```
 
 2. **Environment Variables (all runtimes)**
@@ -298,7 +292,7 @@ Use these steps to reconstruct the environment in a fresh session:
    export OPENAI_API_KEY=...
    export OPENAI_BASE_URL=...
    export OPENAI_API_VERSION=...
-   export SERVICE_BUS_CONNECTION_STRING=...
+   export SERVICE_BUS_NAMESPACE=<service-bus-namespace-name>
    export SERVICE_BUS_QUEUE_PLAN_INTAKE=docwriter-plan-intake
    export SERVICE_BUS_QUEUE_INTAKE_RESUME=docwriter-intake-resume
    export SERVICE_BUS_QUEUE_PLAN=docwriter-plan
@@ -325,7 +319,7 @@ Use these steps to reconstruct the environment in a fresh session:
 3. **Terraform deployment**
    - Secrets: `spn-client-id`, `spn-client-secret`, `spn-tenant-id`, `subscription-id`, `openai_base_url`, `openai_api_version`, `openai_api_key_secret`.
    - Modules provision RG, ACR, Service Bus, Storage, App Insights, Container Apps.
-   - Container Apps module consumes `api_image`, `functions_images` (map of tags), `api_env`, `functions_env`, and optional `api_secrets` describing Key Vault secret IDs. Managed identity is granted `Key Vault Secrets User` at vault scope.
+   - Container Apps module consumes API/UI images and one worker-job image plus per-job KEDA metadata (`worker_jobs`), `api_env`, `worker_env`, and optional `api_secrets` describing Key Vault secret IDs. Managed identity is granted `Key Vault Secrets User` at vault scope plus Service Bus sender/receiver roles.
    - Run:
      ```bash
      terraform -chdir=infra/terraform init

@@ -57,6 +57,8 @@ class Settings:
 
     # Azure Service Bus
     sb_connection_string: str | None = None
+    sb_namespace: str | None = None
+    sb_fully_qualified_namespace: str | None = None
     sb_queue_name: str = "docwriter-jobs"
     sb_queue_plan: str = "docwriter-plan"
     sb_queue_plan_intake: str = "docwriter-plan-intake"
@@ -118,6 +120,8 @@ class Settings:
             openai_base_url=env.get("OPENAI_BASE_URL"),
             openai_api_version=env.get("OPENAI_API_VERSION"),
             sb_connection_string=env.get("SERVICE_BUS_CONNECTION_STRING"),
+            sb_namespace=env.get("SERVICE_BUS_NAMESPACE"),
+            sb_fully_qualified_namespace=env.get("SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE"),
             sb_queue_name=env.get("SERVICE_BUS_QUEUE_NAME", cls.sb_queue_name),
             sb_queue_plan=env.get("SERVICE_BUS_QUEUE_PLAN", cls.sb_queue_plan),
             sb_queue_plan_intake=env.get("SERVICE_BUS_QUEUE_PLAN_INTAKE", cls.sb_queue_plan_intake),
