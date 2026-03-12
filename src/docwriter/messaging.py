@@ -74,9 +74,14 @@ class ServiceBusManager:
     def send_queue(self, queue_name: str, payload: Dict[str, Any]) -> None:
         self.ensure_ready()
         client = self.get_client()
+        safe_payload = _sanitize_queue_payload(payload)
         try:
             with client.get_queue_sender(queue_name) as sender:
-                sender.send_messages(ServiceBusMessage(json.dumps(payload)))
+                sender.send_messages(
+                    ServiceBusMessage(
+                        json.dumps(safe_payload, default=_json_fallback),
+                    )
+                )
         except Exception as exc:
             track_exception(exc, {"queue": queue_name})
             raise
@@ -184,6 +189,38 @@ _ALLOWED_STATUS_EXTRA_KEYS: Set[str] = {
     "cohesion_issues",
     "placeholder_sections",
 }
+
+
+def _sanitize_queue_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    """Drop internal runtime helpers (e.g. lock renew callbacks) before enqueue."""
+    return _sanitize_json_value(payload)
+
+
+def _sanitize_json_value(value: Any) -> Any:
+    if callable(value):
+        return None
+    if isinstance(value, Mapping):
+        out: Dict[str, Any] = {}
+        for k, v in value.items():
+            if isinstance(k, str) and k.startswith("_"):
+                continue
+            if callable(v):
+                continue
+            out[k] = _sanitize_json_value(v)
+        return out
+    if isinstance(value, list):
+        return [_sanitize_json_value(v) for v in value if not callable(v)]
+    if isinstance(value, tuple):
+        return [_sanitize_json_value(v) for v in value if not callable(v)]
+    if isinstance(value, set):
+        return [_sanitize_json_value(v) for v in value if not callable(v)]
+    return value
+
+
+def _json_fallback(value: Any) -> Any:
+    if callable(value):
+        return None
+    return str(value)
 
 
 def _current_cycle(data: Mapping[str, Any]) -> Optional[int]:
