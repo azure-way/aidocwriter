@@ -221,6 +221,11 @@ resource "azurerm_container_app_job" "workers" {
         name             = "service-bus"
         custom_rule_type = each.value.custom_rule_type
         metadata         = each.value.scale_metadata
+
+        authentication {
+          trigger_parameter = "connection"
+          secret_name       = "servicebus-connection-string"
+        }
       }
     }
   }

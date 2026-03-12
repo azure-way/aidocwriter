@@ -50,6 +50,14 @@ resource "azurerm_role_assignment" "principal_rbac" {
   principal_id         = data.azurerm_client_config.current.object_id
 }
 
+resource "azurerm_role_assignment" "service_bus_secret_reader" {
+  scope                = module.service_bus.connection_string_secret_id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_user_assigned_identity.ca_identity.principal_id
+
+  depends_on = [module.service_bus]
+}
+
 resource "azurerm_role_assignment" "storage_secret_reader" {
   scope                = module.storage.connection_string_secret_id
   role_definition_name = "Key Vault Secrets User"
@@ -167,6 +175,7 @@ resource "time_sleep" "wait_60_seconds" {
   create_duration = "60s"
 
   depends_on = [
+    azurerm_role_assignment.service_bus_secret_reader,
     azurerm_role_assignment.storage_secret_reader,
     azurerm_role_assignment.open_ai_key_secret_reader,
     azurerm_role_assignment.app_insights_secret_reader,
@@ -435,6 +444,12 @@ module "app" {
       name                = "azure-openai-api-key"
       env_name            = "OPENAI_API_KEY"
       key_vault_secret_id = azurerm_key_vault_secret.open_ai_key.versionless_id
+      identity            = azurerm_user_assigned_identity.ca_identity.id
+    },
+    {
+      name                = "servicebus-connection-string"
+      env_name            = "SERVICE_BUS_CONNECTION_STRING_SCALER"
+      key_vault_secret_id = module.service_bus.connection_string_kv_id
       identity            = azurerm_user_assigned_identity.ca_identity.id
     },
     {
