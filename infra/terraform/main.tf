@@ -432,7 +432,7 @@ module "app" {
     SERVICE_BUS_NAMESPACE             = module.service_bus.namespace_name
     AZURE_BLOB_CONTAINER              = "docwriter"
     DOCWRITER_STATUS_TABLE            = "DocWriterStatus"
-    DOCWRITER_PLANTUML_REFORMAT_MODEL = "gpt-5.1-codex"
+    DOCWRITER_PLANTUML_REFORMAT_MODEL = "gpt-5.2-codex"
     DOCWRITER_WRITE_BATCH_SIZE        = "4"
     DOCWRITER_DEFAULT_LENGTH_PAGES    = "20"
     DOCWRITER_REVIEW_STYLE_ENABLED    = "False"

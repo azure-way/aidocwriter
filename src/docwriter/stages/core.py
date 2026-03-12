@@ -1627,34 +1627,23 @@ def process_finalize(data: Dict[str, Any]) -> None:
     final_text = ""
     job_paths = _job_paths(data)
     with stage_timer(job_id=data["job_id"], stage="FINALIZE", user_id=job_paths.user_id) as timing:
-        try:
-            store = BlobStore()
-            target_blob = data["out"]
-            final_text = store.get_text(blob=target_blob)
-            final_text = _apply_diagram_results(
-                final_text,
-                data.get("diagram_results", []),
-                job_paths,
-            )
-            final_text = number_markdown_headings(final_text)
-            final_text = insert_table_of_contents(final_text)
-            store.put_text(blob=job_paths.final("md"), text=final_text)
-            pdf_bytes = export_pdf(final_text, {}, store, job_paths)
-            if pdf_bytes:
-                try:
-                    store.put_bytes(blob=job_paths.final("pdf"), data_bytes=pdf_bytes)
-                except Exception:
-                    logging.exception("Failed to upload PDF export for job %s", job_paths.job_id)
-            docx_bytes = export_docx(final_text, {}, store, job_paths)
-            if docx_bytes:
-                try:
-                    store.put_bytes(blob=job_paths.final("docx"), data_bytes=docx_bytes)
-                except Exception as exc:
-                    logging.exception("Failed to upload DOCX export for job %s", job_paths.job_id)
-                    track_exception(exc, {"job_id": job_paths.job_id, "stage": "FINALIZE", "artifact": "docx"})
-        except Exception as exc:
-            logging.exception("Failed to finalize job %s", data.get("job_id"))
-            track_exception(exc, {"job_id": job_paths.job_id, "stage": "FINALIZE"})
+        store = BlobStore()
+        target_blob = data["out"]
+        final_text = store.get_text(blob=target_blob)
+        final_text = _apply_diagram_results(
+            final_text,
+            data.get("diagram_results", []),
+            job_paths,
+        )
+        final_text = number_markdown_headings(final_text)
+        final_text = insert_table_of_contents(final_text)
+        store.put_text(blob=job_paths.final("md"), text=final_text)
+        pdf_bytes = export_pdf(final_text, {}, store, job_paths)
+        if pdf_bytes:
+            store.put_bytes(blob=job_paths.final("pdf"), data_bytes=pdf_bytes)
+        docx_bytes = export_docx(final_text, {}, store, job_paths)
+        if docx_bytes:
+            store.put_bytes(blob=job_paths.final("docx"), data_bytes=docx_bytes)
     final_tokens = 0
     publish_status(
         _stage_completed_event(
