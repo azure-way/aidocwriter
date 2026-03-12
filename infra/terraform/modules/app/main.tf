@@ -47,6 +47,11 @@ resource "azurerm_container_app" "api" {
         value = "https://aidocwriter-plantuml.${azurerm_container_app_environment.main.default_domain}"
       }
 
+      env {
+        name  = "AZURE_CLIENT_ID"
+        value = var.managed_identity_client_id
+      }
+
       dynamic "env" {
         for_each = var.api_env
         content {
@@ -232,6 +237,11 @@ resource "azurerm_container_app_job" "workers" {
       env {
         name  = "PLANTUML_SERVER_URL"
         value = "https://${var.plantuml_server_name}.${azurerm_container_app_environment.main.default_domain}"
+      }
+
+      env {
+        name  = "AZURE_CLIENT_ID"
+        value = var.managed_identity_client_id
       }
 
       env {

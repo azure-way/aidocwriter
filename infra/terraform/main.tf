@@ -177,14 +177,15 @@ resource "time_sleep" "wait_60_seconds" {
 }
 
 module "app" {
-  source                   = "./modules/app"
-  name_prefix              = local.name_prefix
-  location                 = azurerm_resource_group.main.location
-  resource_group_name      = azurerm_resource_group.main.name
-  log_analytics_id         = module.monitoring.log_analytics_id
-  managed_identity_id      = azurerm_user_assigned_identity.ca_identity.id
-  container_registry_login = module.container_registry.url
-  plantuml_server_name     = var.plantuml_server_name
+  source                     = "./modules/app"
+  name_prefix                = local.name_prefix
+  location                   = azurerm_resource_group.main.location
+  resource_group_name        = azurerm_resource_group.main.name
+  log_analytics_id           = module.monitoring.log_analytics_id
+  managed_identity_id        = azurerm_user_assigned_identity.ca_identity.id
+  managed_identity_client_id = azurerm_user_assigned_identity.ca_identity.client_id
+  container_registry_login   = module.container_registry.url
+  plantuml_server_name       = var.plantuml_server_name
 
   tags = var.tags
   api_images = {

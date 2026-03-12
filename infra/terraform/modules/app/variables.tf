@@ -108,6 +108,11 @@ variable "managed_identity_id" {
   description = "The ID of the managed identity to use for the container apps"
 }
 
+variable "managed_identity_client_id" {
+  type        = string
+  description = "The client ID of the managed identity to use for SDK auth selection"
+}
+
 variable "api_secrets" {
   description = "Secrets for the API container app"
 
